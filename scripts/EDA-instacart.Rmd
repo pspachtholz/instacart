@@ -387,8 +387,10 @@ tmp <- order_products_prior %>%
 
 datatable(select(tmp,-aisle_id,-department_id,-organic), style="bootstrap", class="table-condensed", options = list(dom = 'tp'))
 ```  
+
 <br>
 Let's look at his order in the train set. One would assume that he would buy "Organic Whole Milk" and "Organic Reduced Fat Milk":
+
 ```{r warning=FALSE}
 tmp <- orders %>% filter(user_id==99753, eval_set == "train")
 tmp2 <- order_products %>%  
