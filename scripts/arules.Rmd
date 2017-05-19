@@ -1,0 +1,46 @@
+---
+title: "Products bought together"
+author: "Philipp Spachtholz"
+date: "May 18, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Read in the data
+```{r message=FALSE, warning=FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(stringr)
+
+orders <- read_csv('../input/orders.csv')
+products <- read_csv('../input/products.csv')
+order_products <- read_csv('../input/order_products__train.csv')
+#order_products_prior <- read_csv('../input/order_products__prior.csv')
+aisles <- read_csv('../input/aisles.csv')
+departments <- read_csv('../input/departments.csv')
+
+```
+
+
+### Which products are bought together?
+```{r warning=FALSE}
+library(arules)
+tmp <- order_products %>% select(order_id,product_id) %>% mutate(product_id = as.factor(product_id)) %>% as.data.frame()
+
+tmp <- tmp[1:100,] # only look at first 1,000 products to avoid memory issues
+transactions <- as(split(tmp[,"product_id"], tmp[,"order_id"]),"transactions")
+
+inspect(head(transactions,4))
+
+
+rules <- apriori(transactions) 
+rules_conf <- sort(rules, by="confidence", decreasing=TRUE) # 'high-confidence' rules.
+inspect(head(rules_conf))
+
+```
