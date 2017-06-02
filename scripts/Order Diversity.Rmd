@@ -1,0 +1,271 @@
+---
+title: 'New Feature Idea: Order Diversity'
+output:
+  html_document:
+    fig_height: 4
+    fig_width: 5
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+I just had an interesting idea for a new feature that might be related to the probability of reordering.
+
+I call it order diversity and it is the percentage of products in an order that are from different aisles / departments. The idea is
+that the more diverse a first order is, the less likely products are going to be reordered on the next order. 
+
+Let's explore this possibility in this kernel:
+
+### Read in the data
+```{r message=FALSE, warning=FALSE, results='hide'}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+
+orders <- fread('../input/orders.csv')
+products <- fread('../input/products.csv')
+order_products_prior <- fread('../input/order_products__prior.csv')
+```
+
+As the number of items in an order is for sure correlated with the order diversity, I focus on orders with the same number of products to calculate diversity. As orders with 5 products are most common, let's examine those.
+
+So, we first select all first orders containing 5 products and calculate order diversity for those. Then, we can take each corresponding second order and examine the probability of reordering. 
+
+This procedure can of course be done for other numbers of products and also for example for the last prior order and evaluated on the train order. 
+
+#### Do the calculations
+
+```{r}
+order_ids <- order_products_prior %>% 
+  group_by(order_id) %>% 
+  tally() %>% 
+  filter(n==5) %>% 
+  left_join(orders,by="order_id") %>% 
+  filter(order_number == 1) %>% 
+  .$order_id
+
+order1 <- order_products_prior %>% 
+  filter(order_id %in% order_ids) %>% 
+  left_join(products,by="product_id") %>% 
+  group_by(order_id) %>% 
+  summarize(order_diversity_aisles = length(unique(aisle_id))/n(), order_diversity_department = length(unique(department_id))/n()) %>%
+  left_join(orders, by="order_id")
+
+order2 <- orders %>% 
+  filter(order_number==2) %>% 
+  left_join(order_products_prior, by="order_id") %>% 
+  group_by(user_id) %>% 
+  summarize(mean_reordered=mean(reordered)) 
+
+tmp <- order1 %>% left_join(order2,by="user_id")
+
+```
+
+
+#### Plot the effect
+##### Aisle Diversity
+
+```{r}
+tmp %>% group_by(order_diversity_aisles) %>% 
+  summarize(mean_reordered=mean(mean_reordered)) %>% 
+  ggplot(aes(x=order_diversity_aisles,y=mean_reordered)) + geom_bar(stat="identity", fill="red")
+```
+
+##### Department Diversity
+```{r}
+tmp %>% group_by(order_diversity_department) %>% 
+  summarize(mean_reordered=mean(mean_reordered)) %>% 
+  ggplot(aes(x=order_diversity_department,y=mean_reordered)) + geom_bar(stat="identity", fill="red")
+```
+
+So in fact it appears to be true. The more diverse the first order the lower the probability of reordered items in the followin order.
+
+
+### Is this a general effect?
+
+It would be interesting to know whether this holds for more numbers of products:
+
+#### For 7 products in an order
+
+```{r include=FALSE}
+order_ids <- order_products_prior %>% 
+  group_by(order_id) %>% 
+  tally() %>% 
+  filter(n==7) %>% 
+  left_join(orders,by="order_id") %>% 
+  filter(order_number == 1) %>% 
+  .$order_id
+
+order1 <- order_products_prior %>% 
+  filter(order_id %in% order_ids) %>% 
+  left_join(products,by="product_id") %>% 
+  group_by(order_id) %>% 
+  summarize(order_diversity_aisles = length(unique(aisle_id))/n(), order_diversity_department = length(unique(department_id))/n()) %>%
+  left_join(orders, by="order_id")
+
+order2 <- orders %>% 
+  filter(order_number==2) %>% 
+  left_join(order_products_prior, by="order_id") %>% 
+  group_by(user_id) %>% 
+  summarize(mean_reordered=mean(reordered)) 
+
+tmp <- order1 %>% left_join(order2,by="user_id")
+
+```
+
+##### Aisle Diversity
+
+```{r echo=FALSE}
+tmp %>% group_by(order_diversity_aisles) %>% 
+  summarize(mean_reordered=mean(mean_reordered)) %>% 
+  ggplot(aes(x=order_diversity_aisles,y=mean_reordered)) + geom_bar(stat="identity", fill="red")
+```
+
+##### Department Diversity
+```{r echo=FALSE}
+tmp %>% group_by(order_diversity_department) %>% 
+  summarize(mean_reordered=mean(mean_reordered)) %>% 
+  ggplot(aes(x=order_diversity_department,y=mean_reordered)) + geom_bar(stat="identity", fill="red")
+```
+
+
+#### For 10 products in an order
+
+```{r include=FALSE}
+order_ids <- order_products_prior %>% 
+  group_by(order_id) %>% 
+  tally() %>% 
+  filter(n==10) %>% 
+  left_join(orders,by="order_id") %>% 
+  filter(order_number == 1) %>% 
+  .$order_id
+
+order1 <- order_products_prior %>% 
+  filter(order_id %in% order_ids) %>% 
+  left_join(products,by="product_id") %>% 
+  group_by(order_id) %>% 
+  summarize(order_diversity_aisles = length(unique(aisle_id))/n(), order_diversity_department = length(unique(department_id))/n()) %>%
+  left_join(orders, by="order_id")
+
+order2 <- orders %>% 
+  filter(order_number==2) %>% 
+  left_join(order_products_prior, by="order_id") %>% 
+  group_by(user_id) %>% 
+  summarize(mean_reordered=mean(reordered)) 
+
+tmp <- order1 %>% left_join(order2,by="user_id")
+
+```
+
+##### Aisle Diversity
+
+```{r echo=FALSE}
+tmp %>% group_by(order_diversity_aisles) %>% 
+  summarize(mean_reordered=mean(mean_reordered)) %>% 
+  ggplot(aes(x=order_diversity_aisles,y=mean_reordered)) + geom_bar(stat="identity", fill="red")
+```
+
+##### Department Diversity
+```{r echo=FALSE}
+tmp %>% group_by(order_diversity_department) %>% 
+  summarize(mean_reordered=mean(mean_reordered)) %>% 
+  ggplot(aes(x=order_diversity_department,y=mean_reordered)) + geom_bar(stat="identity", fill="red")
+```
+
+
+### For different orders
+It would be interesting to know whether this also holds for other orders, such as the 2nd and 3rd:
+
+#### 2nd and 3rd
+```{r include=FALSE}
+order_ids <- order_products_prior %>% 
+  group_by(order_id) %>% 
+  tally() %>% 
+  filter(n==5) %>% 
+  left_join(orders,by="order_id") %>% 
+  filter(order_number == 2) %>% 
+  .$order_id
+
+order1 <- order_products_prior %>% 
+  filter(order_id %in% order_ids) %>% 
+  left_join(products,by="product_id") %>% 
+  group_by(order_id) %>% 
+  summarize(order_diversity_aisles = length(unique(aisle_id))/n(), order_diversity_department = length(unique(department_id))/n()) %>%
+  left_join(orders, by="order_id")
+
+order2 <- orders %>% 
+  filter(order_number==3) %>% 
+  left_join(order_products_prior, by="order_id") %>% 
+  group_by(user_id) %>% 
+  summarize(mean_reordered=mean(reordered)) 
+
+tmp <- order1 %>% left_join(order2,by="user_id")
+
+```
+
+##### Aisle Diversity
+
+```{r echo=FALSE}
+tmp %>% group_by(order_diversity_aisles) %>% 
+  summarize(mean_reordered=mean(mean_reordered)) %>% 
+  ggplot(aes(x=order_diversity_aisles,y=mean_reordered)) + geom_bar(stat="identity", fill="red")
+```
+
+##### Department Diversity
+```{r echo=FALSE}
+tmp %>% group_by(order_diversity_department) %>% 
+  summarize(mean_reordered=mean(mean_reordered)) %>% 
+  ggplot(aes(x=order_diversity_department,y=mean_reordered)) + geom_bar(stat="identity", fill="red")
+```
+
+
+
+#### 3rd and 4th
+
+```{r include=FALSE}
+order_ids <- order_products_prior %>% 
+  group_by(order_id) %>% 
+  tally() %>% 
+  filter(n==5) %>% 
+  left_join(orders,by="order_id") %>% 
+  filter(order_number == 3) %>% 
+  .$order_id
+
+order1 <- order_products_prior %>% 
+  filter(order_id %in% order_ids) %>% 
+  left_join(products,by="product_id") %>% 
+  group_by(order_id) %>% 
+  summarize(order_diversity_aisles = length(unique(aisle_id))/n(), order_diversity_department = length(unique(department_id))/n()) %>%
+  left_join(orders, by="order_id")
+
+order2 <- orders %>% 
+  filter(order_number==4) %>% 
+  left_join(order_products_prior, by="order_id") %>% 
+  group_by(user_id) %>% 
+  summarize(mean_reordered=mean(reordered)) 
+
+tmp <- order1 %>% left_join(order2,by="user_id") %>% filter(!is.na(mean_reordered))
+
+```
+
+##### Aisle Diversity
+
+```{r echo=FALSE}
+tmp %>% group_by(order_diversity_aisles) %>% 
+  summarize(mean_reordered=mean(mean_reordered)) %>% 
+  ggplot(aes(x=order_diversity_aisles,y=mean_reordered)) + geom_bar(stat="identity", fill="red")
+```
+
+##### Department Diversity
+```{r echo=FALSE}
+tmp %>% group_by(order_diversity_department) %>% 
+  summarize(mean_reordered=mean(mean_reordered)) %>% 
+  ggplot(aes(x=order_diversity_department,y=mean_reordered)) + geom_bar(stat="identity", fill="red")
+```
+
+<br><br>
+  
+  
+#### This really looks like an interesting feature. What do you think?
