@@ -292,7 +292,7 @@ order_products %>%
 ### Organic vs Non-organic
 What is the percentage of orders that are organic vs. not organic?
 ```{r fig.width=4}
-products <- products %>% mutate(organic=ifelse(str_detect(products$product_name,'Organic'),"organic","not organic"), organic= as.factor(organic))
+products <- products %>% mutate(organic=ifelse(str_detect(str_to_lower(products$product_name),'organic'),"organic","not organic"), organic= as.factor(organic))
 
 tmp <- order_products %>% 
   left_join(products, by="product_id") %>% 
