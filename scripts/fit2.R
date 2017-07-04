@@ -135,56 +135,49 @@ gc()
 
 
 # Train / Test datasets ---------------------------------------------------
-traindata <- as.data.frame(data[data$eval_set == "train",])
+train <- as.data.frame(data[data$eval_set == "train",])
+train <- train %>% sample_frac(0.2)
 
+
+# Crossvalidation using xgb.cv
 # 131,209 users in total
 users_per_fold <- 1000
 n_fold <- 5
-val_users_random <- sample(unique(traindata$user_id), size = n_fold*users_per_fold, replace = FALSE)
-val_user_groups <- cut(val_users,n_fold,labels=FALSE)
+val_users_random <- sample(unique(train$user_id), size = n_fold*users_per_fold, replace = FALSE)
+val_user_groups <- cut(val_users_random,n_fold,labels=FALSE)
 val_users <- data.frame(user_id=val_users_random, group=val_user_groups)
-traindata <- traindata %>% left_join(val_users,by="user_id")
+train <- train %>% left_join(val_users,by="user_id")
 
 folds <- list()
 for (i in 1:n_fold) {
-  folds[[i]] <- which(traindata$group == i)
+  folds[[i]] <- which(train$group == i)
 }
-
-
-train <- traindata[!traindata$user_id %in% val_users,]
-train_user_id <- train$user_id
-
-val <- traindata[traindata$user_id %in% val_users,]
-val_user_id <- val$user_id
-rm(traindata)
-
-varnames <- setdiff(colnames(train), c("user_id","order_id","eval_set", "product_id"))
-train <- train[,varnames]
-val <- val[,varnames]
-
-train$reordered[is.na(train$reordered)] <- 0
-val$reordered[is.na(val$reordered)] <- 0
-
-test <- as.data.frame(data[data$eval_set == "test",])
-varnames <- setdiff(colnames(test), c("user_id","eval_set","reordered"))
-test <- test[,varnames]
+train$group<-NULL
 
 rm(data)
 gc()
 
 
+train_user_id <- train$user_id
+
+varnames <- setdiff(colnames(train), c("user_id","order_id","eval_set", "product_id"))
+train <- train[,varnames]
+
+train$reordered[is.na(train$reordered)] <- 0
+
+
+test <- as.data.frame(data[data$eval_set == "test",])
+varnames <- setdiff(colnames(test), c("user_id","eval_set","reordered"))
+test <- test[,varnames]
 
 
 
 # Model -------------------------------------------------------------------
 
 library(xgboost)
-train <- train %>% sample_frac(0.1)
 dtrain <- xgb.DMatrix(data=data.matrix(select(train,-reordered)), label=train$reordered)
 rm(train)
-dval <- xgb.DMatrix(data=data.matrix(select(val,-reordered)), info=list(label=val$reordered, weight=val_user_id))
 
-watchlist <- list(dval=dval)
 
 params <- list(booster="gbtree"
                ,objective="reg:logistic"
@@ -200,6 +193,7 @@ params <- list(booster="gbtree"
                ,alpha=2e-05
 )
 
+res <- xgb.cv(data=dtrain, params=params, nrounds=100, folds=folds)
 model <- xgb.train(data = dtrain, params = params, watchlist = watchlist, nrounds = 50)
 
 importance <- xgb.importance(colnames(dtrain), model = model)
