@@ -1,3 +1,6 @@
+## to do
+# give more weights to reordered trials
+# get f1 eval function right
 rm(list=ls())
 gc()
 library(data.table)
