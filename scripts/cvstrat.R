@@ -2,7 +2,7 @@ library(data.table)
 library(xgboost)
 
 print("Mean F1 Score for use with XGBoost")
-xgb_eval_f1 <- function (yhat, dtrain) {
+eval_f1 <- function (yhat, dtrain) {
   require(ModelMetrics)
   y = getinfo(dtrain, "label")
   dt <- data.table(user_id=train[user_id %in% val_users, user_id], purch=y, pred=yhat)

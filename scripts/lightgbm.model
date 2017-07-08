@@ -1,0 +1,53 @@
+tree
+num_class=1
+num_tree_per_iteration=1
+label_index=0
+max_feature_idx=125
+objective=binary sigmoid:1
+feature_names=cap-shape=bell cap-shape=conical cap-shape=convex cap-shape=flat cap-shape=knobbed cap-shape=sunken cap-surface=fibrous cap-surface=grooves cap-surface=scaly cap-surface=smooth cap-color=brown cap-color=buff cap-color=cinnamon cap-color=gray cap-color=green cap-color=pink cap-color=purple cap-color=red cap-color=white cap-color=yellow bruises?=bruises bruises?=no odor=almond odor=anise odor=creosote odor=fishy odor=foul odor=musty odor=none odor=pungent odor=spicy gill-attachment=attached gill-attachment=descending gill-attachment=free gill-attachment=notched gill-spacing=close gill-spacing=crowded gill-spacing=distant gill-size=broad gill-size=narrow gill-color=black gill-color=brown gill-color=buff gill-color=chocolate gill-color=gray gill-color=green gill-color=orange gill-color=pink gill-color=purple gill-color=red gill-color=white gill-color=yellow stalk-shape=enlarging stalk-shape=tapering stalk-root=bulbous stalk-root=club stalk-root=cup stalk-root=equal stalk-root=rhizomorphs stalk-root=rooted stalk-root=missing stalk-surface-above-ring=fibrous stalk-surface-above-ring=scaly stalk-surface-above-ring=silky stalk-surface-above-ring=smooth stalk-surface-below-ring=fibrous stalk-surface-below-ring=scaly stalk-surface-below-ring=silky stalk-surface-below-ring=smooth stalk-color-above-ring=brown stalk-color-above-ring=buff stalk-color-above-ring=cinnamon stalk-color-above-ring=gray stalk-color-above-ring=orange stalk-color-above-ring=pink stalk-color-above-ring=red stalk-color-above-ring=white stalk-color-above-ring=yellow stalk-color-below-ring=brown stalk-color-below-ring=buff stalk-color-below-ring=cinnamon stalk-color-below-ring=gray stalk-color-below-ring=orange stalk-color-below-ring=pink stalk-color-below-ring=red stalk-color-below-ring=white stalk-color-below-ring=yellow veil-type=partial veil-type=universal veil-color=brown veil-color=orange veil-color=white veil-color=yellow ring-number=none ring-number=one ring-number=two ring-type=cobwebby ring-type=evanescent ring-type=flaring ring-type=large ring-type=none ring-type=pendant ring-type=sheathing ring-type=zone spore-print-color=black spore-print-color=brown spore-print-color=buff spore-print-color=chocolate spore-print-color=green spore-print-color=orange spore-print-color=purple spore-print-color=white spore-print-color=yellow population=abundant population=clustered population=numerous population=scattered population=several population=solitary habitat=grasses habitat=leaves habitat=meadows habitat=paths habitat=urban habitat=waste habitat=woods
+feature_infos=[0:1] none [0:1] [0:1] [0:1] [0:1] [0:1] none [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] none [0:1] none [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] none [0:1] none [0:1] [0:1] none [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] none [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] none [0:1] none [0:1] [0:1] [0:1] none [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] none [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] none none none [0:1] [0:1] [0:1] none [0:1] [0:1] [0:1] none [0:1] [0:1] [0:1] [0:1] [0:1] none none [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1] [0:1]
+
+Tree=0
+num_leaves=4
+split_feature=28 55 59
+split_gain=4005.6953011735864 1162.384150677758 572.80295885344458
+threshold=9.9999996826552254e-021 9.9999996826552254e-021 9.9999996826552254e-021
+decision_type=0 0 0
+default_value=0 0 0
+left_child=1 2 -1
+right_child=-2 -3 -4
+leaf_parent=2 0 1 2
+leaf_value=1.9042071197411004 -1.8692717584369449 -1.7155555555555555 -2
+leaf_count=3090 2815 450 158
+internal_value=0 1.2969172525689563 1.7142857142857142
+internal_count=6513 3698 3248
+shrinkage=1
+has_categorical=0
+
+
+Tree=1
+num_leaves=4
+split_feature=63 108 42
+split_gain=451.68357796687968 396.9461220666326 282.49790671519725
+threshold=9.9999996826552254e-021 9.9999996826552254e-021 9.9999996826552254e-021
+decision_type=0 0 0
+default_value=0 0 0
+left_child=1 2 -1
+right_child=-2 -3 -4
+leaf_parent=2 0 1 2
+leaf_value=-0.91229641619099433 1.1985953473780948 7.4835730834577561 1.1489407280097461
+leaf_count=3853 1915 53 692
+internal_value=0 -0.51314620581450676 -0.60640655456680126
+internal_count=6513 4598 4545
+shrinkage=1
+has_categorical=0
+
+
+
+feature importances:
+odor=none=1
+gill-color=buff=1
+stalk-root=club=1
+stalk-root=rooted=1
+stalk-surface-above-ring=silky=1
+spore-print-color=green=1
