@@ -4,21 +4,24 @@ library(data.table)
 library(dplyr)
 library(tidyr)
 library(lightgbm)
+library(stringr)
+library(ModelMetrics)
 
 
 setwd("D:/Eigene Dateien/sonstiges/Kaggle/instacart/scripts")
 
+f1 <- function (y, pred)
+{
+  tp <- sum(pred==1 & y == 1)
+  fp <- sum(pred==1 & y == 0)
+  fn <- sum(pred==0 & y == 1)
 
-print("Mean F1 Score for use with XGBoost")
-eval_f1 <- function (yhat, dtrain) {
-  require(ModelMetrics)
-  y <- getinfo(dtrain, "label")
-  dt <- data.table(user_id=valid_users, purch=y, pred=yhat)
-  dt <- dt %>% group_by(user_id) %>% mutate(f1_1=f1Score(purch, pred, cutoff=0.1), f1_2=f1Score(purch, pred, cutoff=0.2), f1_3=f1Score(purch, pred, cutoff=0.3)) 
-  f1 <- mean(dt$f1_1,na.rm=T)
-  f2 <- mean(dt$f1_2,na.rm=T)  
-  f3 <- mean(dt$f1_3,na.rm=T)
-  return (list(name = "f1", value = f1, higher_better = TRUE))
+  precision <- ifelse ((tp==0 & fp==0), 0, tp/(tp+fp))
+  recall <- ifelse ((tp==0 & fn==0), 0, tp/(tp+fn))
+  
+  score <- ifelse ((precision==0 & recall==0), 0, 2*precision*recall/(precision+recall))
+  score
+
 }
 
 # Load Data ---------------------------------------------------------------
@@ -49,6 +52,12 @@ opt$user_id <- ord$user_id[match(opt$order_id, ord$order_id)]
 # join products with order info for all prior orders
 op <- ord %>% inner_join(opp, by = "order_id")
 
+# data.table is way faster
+op <- as.data.table(op)
+setkeyv(op,c("user_id","product_id"))
+op[,num_order := length(unique(order_id)),.(user_id)]
+op[,c("product_time2","first_order","last_order","sum_order") := .(1:.N,order_number[1],order_number[.N],.N),.(user_id,product_id)]
+
 rm(opp)
 gc()
 
@@ -69,9 +78,20 @@ prd <- op %>%
     prod_second_orders = sum(product_time == 2)
   )
 
-prd$prod_reorder_probability <- prd$prod_second_orders / prd$prod_first_orders
+prd$prod_reorder_probability <- prd$prod_second_orders / prd$prod_first_orders # 
 prd$prod_reorder_times <- 1 + prd$prod_reorders / prd$prod_first_orders
 prd$prod_reorder_ratio <- prd$prod_reorders / prd$prod_orders
+
+# in which percentage of orders after first order is a product reordered
+
+op %>% 
+  group_by(user_id) %>% mutate(num_orders=max(order_number)) %>% 
+  ungroup() %>% 
+  group_by(user_id, product_id) %>% 
+  mutate(first_order = first(order_number)) %>%
+  filter(order_number > first_order) %>% 
+  mutate(prod_percent_after_first_order = sum(reordered)/n()) %>% head(100) %>% View()
+  
 
 prd <- prd %>% select(-prod_reorders, -prod_first_orders, -prod_second_orders)
 
@@ -80,12 +100,12 @@ prd <- products %>% mutate(organic = ifelse(str_detect(str_to_lower(product_name
 prd <- op %>% 
   group_by(user_id) %>% mutate(num_orders=max(order_number)) %>% 
   ungroup() %>% 
-  group_by(user_id, product_id) %>%
+  group_by(user_id, product_id) %>% head(200) %>% View()
   mutate(sum_reorders = sum(reordered)) %>% 
   ungroup() %>% 
-  mutate(inpercent_orders = sum_reorders/num_orders) %>% 
+  mutate(prod_inpercent_orders = sum_reorders/num_orders) %>% 
   group_by(product_id) %>% 
-  summarise(inpercent_orders = mean(inpercent_orders)) %>% 
+  summarise(prod_inpercent_orders = mean(prod_inpercent_orders)) %>% 
   right_join(prd, by="product_id")
 
 prd <- op %>% group_by(product_id) %>% summarize(prod_popularity=n_distinct(user_id)) %>% 
@@ -99,6 +119,7 @@ prd <- op %>%
   group_by(user_id, product_id) %>%
   mutate(product_time = row_number()) %>% mutate(prod_orders_till_reorder = nth(order_number,2)-nth(order_number,1)) %>% summarise(prod_orders_till_reorder=mean(prod_orders_till_reorder)) %>% ungroup() %>% group_by(product_id) %>% summarise(prod_orders_till_reorder=mean(prod_orders_till_reorder,na.rm=T)) %>% right_join(prd, by="product_id")
 
+# mean days till first reorder
 
 rm(products)
 gc()
@@ -167,11 +188,43 @@ gc()
 
 # Train / Test datasets ---------------------------------------------------
 train <- as.data.frame(data[data$eval_set == "train",])
+
+user_ids <- train$user_id
+n_users <- n_distinct(train$user_id)
+
+val_users <- sample_n(data.frame(id=unique(train$user_id)),10000)$id
+train_users <- setdiff(user_ids, val_users)
+
+val <- train %>% filter(user_id %in% val_users)
+train <- train %>% filter(user_id %in% train_users)
+
+val_userid <- val$user_id
+train_userid <- train$user_id
+
+subtrain <- sample_frac(train, 1)
+subval <- sample_frac(val, 1)
+
+subval_userid <- subval$user_id
+subtrain_userid <- subtrain$user_id
+
 train$eval_set <- NULL
 train$user_id <- NULL
 train$product_id <- NULL
 train$order_id <- NULL
 train$reordered[is.na(train$reordered)] <- 0
+
+subtrain$eval_set <- NULL
+subtrain$user_id <- NULL
+subtrain$product_id <- NULL
+subtrain$order_id <- NULL
+subtrain$reordered[is.na(subtrain$reordered)] <- 0
+
+subval$eval_set <- NULL
+subval$user_id <- NULL
+subval$product_id <- NULL
+subval$order_id <- NULL
+subval$reordered[is.na(subval$reordered)] <- 0
+
 
 test <- as.data.frame(data[data$eval_set == "test",])
 test$eval_set <- NULL
@@ -187,7 +240,7 @@ library(xgboost)
 
 params <- list(
   "objective"           = "reg:logistic",
-  "eval_metric"         = "logloss",
+  "eval_metric"         = "auc",
   "eta"                 = 0.1,
   "max_depth"           = 6,
   "min_child_weight"    = 10,
@@ -198,20 +251,34 @@ params <- list(
   "lambda"              = 10
 )
 
-subtrain <- train %>% sample_frac(0.2)
-X <- xgb.DMatrix(as.matrix(subtrain %>% select(-reordered)), label = subtrain$reordered)
-model <- xgboost(data = X, params = params, nrounds = 100)
 
-importance <- xgb.importance(colnames(X), model = model)
+
+dtrain <- xgb.DMatrix(as.matrix(subtrain %>% select(-reordered)), label = subtrain$reordered)
+dval <- xgb.DMatrix(as.matrix(subval %>% select(-reordered)), label = subval$reordered)
+watchlist <- list(train = dtrain, val=dval)
+
+model <- xgb.train(data = dtrain, params = params, nrounds = 100, watchlist=watchlist)
+
+df_subtrain <- data.frame(user_id=subtrain_userid, y=subtrain$reordered, yhat=predict(model,dtrain), pred=predict(model,dtrain)>0.18)
+tmp <- df_subtrain %>% group_by(user_id) %>% summarise(f1=f1(y, pred)) 
+tmp %>% ungroup() %>% summarize(meanf1 = mean(f1)) %>% .[[1]]
+
+df_subval <- data.frame(user_id=subval_userid, y=subval$reordered, yhat=predict(model,dval))
+tmp <- df_subval %>% group_by(user_id) %>% summarise(f1=f1Score(y, yhat, cutoff=0.18)) 
+tmp %>% mutate(f1=ifelse(is.na(f1),0,f1)) %>% summarize(meanf1 = mean(f1)) %>% .[[1]]
+
+
+importance <- xgb.importance(colnames(dtrain), model = model)
 xgb.ggplot.importance(importance)
 
-rm(X, importance, subtrain)
+rm(dtrain, importance, subtrain)
 gc()
 
 
+
 # Apply model -------------------------------------------------------------
-X <- xgb.DMatrix(as.matrix(test %>% select(-order_id, -product_id)))
-test$reordered <- predict(model, X)
+dtest <- xgb.DMatrix(as.matrix(test %>% select(-order_id, -product_id)))
+test$reordered <- predict(model, dtest)
 
 test$reordered <- (test$reordered > 0.18) * 1
 
