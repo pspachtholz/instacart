@@ -196,12 +196,12 @@ params <- list(
   "min_child_weight"    = 10,
   "gamma"               = 0.70,
   "subsample"           = 0.76,
-  "colsample_bytree"    = 0.95,
+  "colsample_bytree"    = 0.9,
   "alpha"               = 2e-05,
   "lambda"              = 10
 )
 
-subtrain <- train %>% sample_frac(0.1)
+subtrain <- train %>% sample_frac(0.2)
 X <- xgb.DMatrix(as.matrix(subtrain %>% select(-reordered)), label = subtrain$reordered)
 model <- xgboost(data = X, params = params, nrounds = 80)
 
@@ -216,7 +216,7 @@ gc()
 X <- xgb.DMatrix(as.matrix(test %>% select(-order_id, -product_id)))
 test$reordered <- predict(model, X)
 
-test$reordered <- (test$reordered > 0.21) * 1
+test$reordered <- (test$reordered > 0.16) * 1
 
 submission <- test %>%
   filter(reordered == 1) %>%

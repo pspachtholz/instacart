@@ -50,13 +50,15 @@ rm(aisles, departments)
 opt$user_id <- ord$user_id[match(opt$order_id, ord$order_id)]
 
 # join products with order info for all prior orders
-op <- ord %>% inner_join(opp, by = "order_id")
+setkey(ord,order_id)
+setkey(opp,order_id)
+
+op <- ord[opp,nomatch=0]
 
 # data.table is way faster
-op <- as.data.table(op)
-setkeyv(op,c("user_id","product_id"))
+setkeyv(op,c("user_id","product_id", "order_number"))
 op[,num_order := length(unique(order_id)),.(user_id)]
-op[,c("product_time2","first_order","last_order","sum_order") := .(1:.N,order_number[1],order_number[.N],.N),.(user_id,product_id)]
+op[,c("product_time","first_order","second_order", "last_order","sum_order") := .(1:.N,min(order_number),order_number[2], max(order_number),.N),.(user_id,product_id)]
 
 rm(opp)
 gc()
@@ -65,7 +67,7 @@ gc()
 # Products ----------------------------------------------------------------
 
 ## product_time: how often has a product been ordered total per user
-prd <- op %>%
+prd2 <- op %>%
   arrange(user_id, order_number, product_id) %>%
   group_by(user_id, product_id) %>%
   mutate(product_time = row_number()) %>%
@@ -78,46 +80,27 @@ prd <- op %>%
     prod_second_orders = sum(product_time == 2)
   )
 
-prd$prod_reorder_probability <- prd$prod_second_orders / prd$prod_first_orders # 
+prd2$prod_reorder_probability <- prd2$prod_second_orders / prd2$prod_first_orders # 
 prd$prod_reorder_times <- 1 + prd$prod_reorders / prd$prod_first_orders
 prd$prod_reorder_ratio <- prd$prod_reorders / prd$prod_orders
 
-# in which percentage of orders after first order is a product reordered
-
-op %>% 
-  group_by(user_id) %>% mutate(num_orders=max(order_number)) %>% 
-  ungroup() %>% 
-  group_by(user_id, product_id) %>% 
-  mutate(first_order = first(order_number)) %>%
-  filter(order_number > first_order) %>% 
-  mutate(prod_percent_after_first_order = sum(reordered)/n()) %>% head(100) %>% View()
-  
+prd <- op[, .(prod_orders = .N, 
+              prod_reorders = sum(reordered), 
+              prod_first_orders = sum(product_time==1), 
+              prod_second_orders = sum(product_time==2), 
+              prod_add_to_cart = mean(add_to_cart_order), 
+              prod_inpercent_orders=mean(sum_order)/mean(num_order), 
+              prod_inpercent_afterfirst = mean(sum_order)/(mean(num_order)-mean(first_order)+1),
+              prod_popularity = mean(length(unique(user_id))),
+              prod_orders_till_reorder = mean(second_order-first_order,na.rm=T)),by=product_id][, 
+                  ':=' (prod_reorder_probability = prod_second_orders / prod_first_orders,
+                       prod_reorder_times = 1 + prod_reorders / prod_first_orders,
+                       prod_reorder_ratio = prod_reorders / prod_orders)]
 
 prd <- prd %>% select(-prod_reorders, -prod_first_orders, -prod_second_orders)
 
 prd <- products %>% mutate(organic = ifelse(str_detect(str_to_lower(product_name),'organic'),1,0)) %>% select(product_id, organic) %>% right_join(prd, by="product_id")
 
-prd <- op %>% 
-  group_by(user_id) %>% mutate(num_orders=max(order_number)) %>% 
-  ungroup() %>% 
-  group_by(user_id, product_id) %>% head(200) %>% View()
-  mutate(sum_reorders = sum(reordered)) %>% 
-  ungroup() %>% 
-  mutate(prod_inpercent_orders = sum_reorders/num_orders) %>% 
-  group_by(product_id) %>% 
-  summarise(prod_inpercent_orders = mean(prod_inpercent_orders)) %>% 
-  right_join(prd, by="product_id")
-
-prd <- op %>% group_by(product_id) %>% summarize(prod_popularity=n_distinct(user_id)) %>% 
-  right_join(prd, by="product_id")
-
-# prd$prod_order_people_diversity <- prd$prod_orders/prd$prod_popularity # duplicate to prod_reorder_times
-
-#orders till first reorder
-prd <- op %>% 
-  arrange(user_id, order_number, product_id) %>%
-  group_by(user_id, product_id) %>%
-  mutate(product_time = row_number()) %>% mutate(prod_orders_till_reorder = nth(order_number,2)-nth(order_number,1)) %>% summarise(prod_orders_till_reorder=mean(prod_orders_till_reorder)) %>% ungroup() %>% group_by(product_id) %>% summarise(prod_orders_till_reorder=mean(prod_orders_till_reorder,na.rm=T)) %>% right_join(prd, by="product_id")
 
 # mean days till first reorder
 
