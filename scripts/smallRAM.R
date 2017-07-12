@@ -17,12 +17,11 @@ f1 <- function (y, pred)
   fp <- sum(pred==1 & y == 0)
   fn <- sum(pred==0 & y == 1)
   
-  precision <- ifelse ((tp==0 & fp==0), 0, tp/(tp+fp))
-  recall <- ifelse ((tp==0 & fn==0), 0, tp/(tp+fn))
-  
-  score <- ifelse ((precision==0 & recall==0), 0, 2*precision*recall/(precision+recall))
+  precision <- ifelse ((tp==0 & fp==0), 0, tp/(tp+fp)) # no reorders predicted
+  recall <- ifelse ((tp==0 & fn==0), 0, tp/(tp+fn)) # no products reordered
+
+  score <- ifelse((all(pred==0) & all(y==0)),1,ifelse((precision==0 & recall==0),0,2*precision*recall/(precision+recall)))
   score
-  
 }
 
 # Load Data ---------------------------------------------------------------
@@ -36,20 +35,16 @@ ord <- fread(file.path(path, "orders.csv"))
 products <- fread(file.path(path, "products.csv"))
 
 
-
 # Reshape data ------------------------------------------------------------
 aisles$aisle <- as.factor(aisles$aisle)
 departments$department <- as.factor(departments$department)
 ord$eval_set <- as.factor(ord$eval_set)
-products$product_name <- as.factor(products$product_name)
-
-products <- products %>% 
-  inner_join(aisles) %>% inner_join(departments) %>% 
-  select(-aisle_id, -department_id)
-rm(aisles, departments)
+products[,':=' (product_name=NULL)]
 
 # add user_id to train orders
 opt$user_id <- ord$user_id[match(opt$order_id, ord$order_id)]
+train_info <- opt %>% group_by(user_id) %>% summarize(sum_products = n(), sum_reordered = sum(reordered))
+
 
 # join products with order info for all prior orders
 setkey(opp,order_id)
@@ -59,6 +54,13 @@ op <- merge(ord,opp,all=FALSE) # inner join filter
 rm(opp)
 gc()
 
+# Get the only reorderes ------------------------------
+tmp <- op[order_number>1,.(mean_reordered = mean(reordered), n=.N), user_id]
+reorder_users <- tmp[mean_reordered==1, user_id]
+rm(tmp)
+gc()
+
+
 
 # Takse subset of Data ----------------------------------------------------
 test_users <- unique(ord[eval_set=="test", user_id])
@@ -66,7 +68,7 @@ train_users <- unique(ord[eval_set=="train", user_id])
 
 n_train_users <- length(train_users)
 
-n_users <- 30000
+n_users <- 10000
 sel_train_users <- train_users[1:n_users]
 
 all_users <- c(sel_train_users, test_users)
@@ -93,8 +95,8 @@ prd <- op[, .(
               prod_first_orders = sum(product_time==1), 
               prod_second_orders = sum(product_time==2), 
               prod_add_to_cart = mean(add_to_cart_order), 
-              prod_inpercent_orders=mean(sum_order)/mean(num_order), 
-              prod_inpercent_afterfirst = mean(sum_order)/(mean(num_order)-mean(first_order)+1),
+              prod_inpercent_orders=mean(sum_order/num_order), 
+              prod_inpercent_afterfirst = mean(sum_order/(num_order-first_order+1)),
               prod_popularity = mean(length(unique(user_id))),
               prod_orders_till_reorder = mean(second_order-first_order,na.rm=T),
               prod_days_till_reorder = mean(days_since_prior_order,na.rm=T)),by=product_id][,':=' (
@@ -106,7 +108,7 @@ prd <- op[, .(
                              prod_second_orders = NULL)]
 
 products <- as.data.table(products)
-products <- products[,':=' (prod_organic = ifelse(str_detect(str_to_lower(product_name),'organic'),1,0))][,.(product_id, organic)]
+#products <- products[,':=' (prod_organic = ifelse(str_detect(str_to_lower(product_name),'organic'),1,0))][,.(product_id, organic)]
 setkey(products,product_id)
 setkey(prd, product_id)
 prd <- merge(prd, products, all.x=TRUE)
@@ -203,6 +205,7 @@ train$order_id <- NULL
 train$reordered[is.na(train$reordered)] <- 0
 
 test <- as.data.frame(data[data$eval_set == "test",])
+test_user_id <- test$user_id
 test$eval_set <- NULL
 test$user_id <- NULL
 test$reordered <- NULL
@@ -216,7 +219,7 @@ library(xgboost)
 
 params <- list(
   "objective"           = "reg:logistic",
-  "eval_metric"         = "logloss",
+  "eval_metric"         = "auc",
   "eta"                 = 0.1,
   "max_depth"           = 6,
   "min_child_weight"    = 10,
@@ -234,7 +237,11 @@ importance <- xgb.importance(colnames(dtrain), model = model)
 xgb.ggplot.importance(importance)
 
 df_train <- data.frame(user_id=train_user_id, y=train$reordered, yhat=predict(model,dtrain), pred=predict(model,dtrain)>0.18)
-tmp <- df_train %>% group_by(user_id) %>% summarise(f1=f1(y, pred)) 
+tmp <- df_train %>% group_by(user_id) %>% summarise(f1=f1(y, pred), sum_predicted=sum(pred)) %>% left_join(train_info)
+tmp <- tmp %>% mutate(diff_basket_size = sum_products-sum_predicted)
+ggplot(tmp,aes(x=sum_predicted,y=f1))+geom_point()+geom_smooth()
+ggplot(tmp,aes(x=sum_reordered/sum_products,y=f1))+geom_point()+geom_smooth()
+
 tmp %>% ungroup() %>% summarize(meanf1 = mean(f1)) %>% .[[1]]
 
 rm(X, importance, subtrain)
@@ -245,7 +252,16 @@ gc()
 X <- xgb.DMatrix(as.matrix(test %>% select(-order_id, -product_id)))
 test$reordered <- predict(model, X)
 
+# Threshold ---------------------------------------------------------------
+close_orders <- test %>% group_by(order_id) %>% summarize(m=mean(reordered)) %>% filter(between(m,0.16,0.2)) %>% select(order_id) %>% .[[1]]
+
 test$reordered <- (test$reordered > 0.18) * 1
+
+# all reorderes to 1 -----------------------------------------------------
+test$user_id <- test_user_id
+test <- as.data.table(test)
+test[user_id %in% reorder_users, ':=' (reordered=1)]
+
 
 submission <- test %>%
   filter(reordered == 1) %>%
@@ -254,12 +270,15 @@ submission <- test %>%
     products = paste(product_id, collapse = " ")
   )
 
+# add None to close orders -----------------------------------------------
+new_submission <- submission %>% mutate(products = ifelse(order_id %in% close_orders & length(str_split(products, " "))<5, str_c(products,'None', collapse = " "),products))
+
 missing <- data.frame(
-  order_id = unique(test$order_id[!test$order_id %in% submission$order_id]),
+  order_id = unique(test$order_id[!test$order_id %in% new_submission$order_id]),
   products = "None"
 )
 
-submission <- submission %>% bind_rows(missing) %>% arrange(order_id)
-write.csv(submission, file = "submit.csv", row.names = F)
+new_submission <- new_submission %>% bind_rows(missing) %>% arrange(order_id)
+write.csv(new_submission, file = "submit.csv", row.names = F)
 
 

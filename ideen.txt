@@ -9,3 +9,8 @@ None Schwelle flexibel
 dasselbe kann ich mit allen all machen, alle reordered
 
 so viele none orders in train 0.06555953
+
+
+features: 
+- standardabweichung von basket size.
+- recency jv24
