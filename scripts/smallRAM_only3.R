@@ -64,9 +64,6 @@ gc()
 # Take subset of Data ----------------------------------------------------
 test_users <- unique(ord[eval_set=="test", user_id])
 train_users <- unique(ord[eval_set=="train" & !user_id %in% reorder_users , user_id])
-
-n_train_users <- length(train_users)
-
 n_users <- 25000
 sel_train_users <- train_users[1:n_users]
 
@@ -77,11 +74,14 @@ op<-op[user_id %in% all_users]
 opt<-opt[user_id %in% all_users]
 ord<-ord[user_id %in% all_users]
 
-
-
 # data.table is way faster
 setkeyv(op,c("user_id","product_id", "order_number"))
-op[,num_order := length(unique(order_id)),.(user_id)]
+op[,num_order := uniqueN(order_id),.(user_id)]
+ord[,max_order := uniqueN(order_id),.(user_id)]
+
+#op<-op[order_number >= num_order-3]
+#ord<-ord[order_number >= max_order-3]
+
 op[, ':=' ( product_time = 1:.N,
             first_order = min(order_number),
             second_order = order_number[2],
@@ -125,7 +125,7 @@ gc()
 
 
 # Users -------------------------------------------------------------------
-users <- ord[eval_set=="prior", .(user_orders=max(order_number),
+users <- ord[eval_set=="prior", .(user_orders=.N,
                          user_period=sum(days_since_prior_order, na.rm = T),
                          user_mean_days_since_prior = mean(days_since_prior_order, na.rm = T)), user_id]
 
@@ -138,6 +138,13 @@ us <- op[,.(
 ), user_id]
 
 users <- merge(users, us, all=FALSE)
+
+us <- op[,.(user_order_products = .N),.(user_id,order_id)][,.(user_order_products_min=min(user_order_products),user_order_products_max=max(user_order_products),user_order_products_sd=sd(user_order_products)), user_id]
+users <- merge(users, us, all=FALSE)
+
+us <- op[(num_order-order_number)<=1, .(user_order_products_2 = .N, mean_reordered=mean(reordered)), .(user_id, order_id)][,.(user_order_products_2 = mean(user_order_products_2), user_reorder_rate_2=mean(mean_reordered)), user_id]
+users <- merge(users, us, all=FALSE)
+
 users[,':=' (user_average_basket = user_total_products / user_orders)]
 
 us <- ord[eval_set != "prior", .(user_id,
@@ -146,7 +153,7 @@ us <- ord[eval_set != "prior", .(user_id,
                                  train_time_since_last_order = days_since_prior_order,
                                  train_dow = order_dow,
                                  train_how = order_hour_of_day,
-                                 train_ordernum = order_number)]
+                                 train_ordernum = order_number)][,':=' (train_time_0 = (train_time_since_last_order==0)*1)]
 
 setkey(users, user_id)
 setkey(us, user_id)
@@ -244,7 +251,7 @@ params <- list(
   "min_child_weight"    = 10,
   "gamma"               = 0.70,
   "subsample"           = 1,
-  "colsample_bytree"    = 0.95,
+  "colsample_bytree"    = 0.7,
   "alpha"               = 2e-05,
   "lambda"              = 10
 )
@@ -254,23 +261,44 @@ threshold = 0.18
 dtrain <- xgb.DMatrix(as.matrix(train %>% select(-reordered)), label = train$reordered)
 dval <- xgb.DMatrix(as.matrix(val %>% select(-reordered)), label = val$reordered)
 
-model <- xgboost(data = dtrain, params = params, nrounds = 160)
+model <- xgboost(data = dtrain, params = params, nrounds = 80)
 
 importance <- xgb.importance(colnames(dtrain), model = model)
-#xgb.ggplot.importance(importance)
+xgb.ggplot.importance(importance)
 
-df_train <- data.frame(user_id=train_userid, y=train$reordered, yhat=predict(model,dtrain), pred=predict(model,dtrain)>threshold)
-tmp <- df_train %>% group_by(user_id) %>% summarise(f1=f1(y, pred), sum_predicted=sum(pred)) %>% left_join(train_info)
-tmp <- tmp %>% mutate(diff_basket_size = sum_products-sum_predicted)
+# Threshold ---------------------------------------------------------------
+train<-as.data.table(train)
+train$user_id <- train_userid
+
+train$prediction <- predict(model,dtrain)
+train <- train[order(user_id,-prediction)]
+train[,':=' (top = 1:.N), user_id]
+train[, ':=' (pred=ifelse(top<=user_order_products_2*user_reorder_rate_2,1,0))]
+train[, ':=' (pred=ifelse(prediction>0.18,1,0))] # fixed threshold
+
+
+tmp <- train %>% group_by(user_id) %>% summarise(f1=f1(reordered, pred), sum_predicted=sum(pred)) %>% left_join(train_info)
+tmp <- tmp %>% mutate(diff_basket_size = sum_reordered-sum_predicted)
 #ggplot(tmp,aes(x=sum_predicted,y=f1))+geom_point()+geom_smooth()
 #ggplot(tmp,aes(x=sum_reordered/sum_products,y=f1))+geom_point()+geom_smooth()
 
 tmp %>% ungroup() %>% summarize(meanf1 = mean(f1)) %>% .[[1]]
 
 
-df_val <- data.frame(user_id=val_userid, y=val$reordered, yhat=predict(model,dval), pred=predict(model,dval)>threshold)
-tmp <- df_val %>% group_by(user_id) %>% summarise(f1=f1(y, pred), sum_predicted=sum(pred)) %>% left_join(train_info)
-tmp <- tmp %>% mutate(diff_basket_size = sum_products-sum_predicted)
+val$prediction <- predict(model, dval)
+val$user_id <- val_userid
+
+# Threshold ---------------------------------------------------------------
+val<-as.data.table(val)
+val <- val[order(user_id,-prediction)]
+val[,':=' (top = 1:.N), user_id]
+val[, ':=' (pred=ifelse(top<=user_order_products_2*user_reorder_rate_2,1,0))]
+#val[, ':=' (pred=ifelse(prediction>0.18,1,0))] # fixed threshold
+
+
+summary(glm(reordered ~ prediction, data=val))
+tmp <- val %>% group_by(user_id) %>% summarise(f1=f1(reordered, pred), sum_predicted=sum(pred), avg_size=mean(user_average_basket)) %>% left_join(train_info)
+tmp <- tmp %>% mutate(diff_basket_size = sum_reordered-sum_predicted)
 #ggplot(tmp,aes(x=sum_predicted,y=f1))+geom_point()+geom_smooth()
 #ggplot(tmp,aes(x=sum_reordered/sum_products,y=f1))+geom_point()+geom_smooth()
 
@@ -283,14 +311,17 @@ gc()
 # Apply model -------------------------------------------------------------
 dtest <- xgb.DMatrix(as.matrix(test %>% select(-order_id, -product_id)))
 test$reordered <- predict(model, dtest)
+test$user_id <- test_user_id
 
 # Threshold ---------------------------------------------------------------
-close_orders <- test %>% group_by(order_id) %>% summarize(m=mean(reordered),mx=max(reordered),s=sum(reordered>threshold)) %>% filter(between(m,0.9*threshold,1.1*threshold) & s <= 5 & mx <= 0.35) %>% select(order_id) %>% .[[1]]
-test$reordered <- (test$reordered > threshold) * 1
+test<-as.data.table(test)
+test <- test[order(user_id,-reordered)]
+test[,':=' (top = 1:.N), user_id]
+test[, ':=' (reordered=ifelse(top<=user_average_basket*user_reorder_ratio,1,0))]
+#close_orders <- test %>% group_by(order_id) %>% summarize(m=mean(reordered),mx=max(reordered),s=sum(reordered>threshold)) %>% filter(between(m,0.9*threshold,1.1*threshold) & s <= 5 & mx <= 0.35) %>% select(order_id) %>% .[[1]]
+#test$reordered <- (test$reordered > threshold) * 1
 
 # all reorderes to 1 -----------------------------------------------------
-test$user_id <- test_user_id
-test <- as.data.table(test)
 test[user_id %in% reorder_users, ':=' (reordered=1)]
 
 
@@ -302,14 +333,14 @@ submission <- test %>%
   )
 
 # add None to close orders -----------------------------------------------
-new_submission <- submission %>% mutate(products = ifelse(order_id %in% close_orders, str_c(products,'None', collapse = " "),products))
+#new_submission <- submission %>% mutate(products = ifelse(order_id %in% close_orders, str_c(products,'None', collapse = " "),products))
 
 missing <- data.frame(
-  order_id = unique(test$order_id[!test$order_id %in% new_submission$order_id]),
+  order_id = unique(test$order_id[!test$order_id %in% submission$order_id]),
   products = "None"
 )
 
-new_submission <- new_submission %>% bind_rows(missing) %>% arrange(order_id)
-write.csv(new_submission, file = "submit.csv", row.names = F)
+submission <- submission %>% bind_rows(missing) %>% arrange(order_id)
+write.csv(submission, file = "submit.csv", row.names = F)
 
 
