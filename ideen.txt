@@ -11,6 +11,76 @@ dasselbe kann ich mit allen all machen, alle reordered
 so viele none orders in train 0.06555953
 
 
+I also use the mean and std of cart\dow\hour\days on users, and make the dis of train/test order.
+
 features: 
 - standardabweichung von basket size.
 - recency jv24
+
+
+
+    User Features: #Products purchased, #Orders made, frequency and recency of orders, #Aisle purchased from, #Department purchased from, frequency and recency of reorders, tenure, mean order size, etc.
+
+    Product Features: #users, #orders, order frequency, reorder rate, recency, mean add_to_cart_order, etc.
+
+    Aisle and Department Features: similar to product features
+
+    user product interaction:#purchases, #reorders, #day since last purchase, #order since last purchase etc.
+
+    User aisle and department interaction: similar to product interaction
+
+    User time interaction: user preferred day of week, user preferred time of day, similar features for products and aisles
+
+
+
+1. Product level - 'ratio of train or test day of week to average prior day of week' and 'ratio of train or test hour of day to average prior hour of day' 
+2. User level - Same 2 ratios mentioned above. 
+3. User-Product level - Same 2 ratios mentioned above.
+
+
+4. department level - wie viele produkte pro department, wie viel gekauft, wie viel reordered
+5. aisle level
+
+user hört auf product zu kaufen... evtl. sowas wie regression...
+
+
+    df['user_average_days_between_orders'] = df.user_id.map(users.average_days_between_orders)
+
+
+
+    print('order related features')
+    # df['dow'] = df.order_id.map(orders.order_dow)
+    df['order_hour_of_day'] = df.order_id.map(orders.order_hour_of_day)
+    df['days_since_prior_order'] = df.order_id.map(orders.days_since_prior_order)
+    df['days_since_ratio'] = df.days_since_prior_order / df.user_average_days_between_orders
+
+average days between orders könnte man auch für alle früheren orders machen....
+
+            up_orders_since_last_order = user_orders - up_last_order, auch als percent
+
+    df['UP_delta_hour_vs_last'] = abs(df.order_hour_of_day - df.UP_last_order_id.map(orders.order_hour_of_day)).map(lambda x: min(x, 24-x)).astype(np.int8)
+
+
+eigene idee: order diversity percentage of products in an order that are from different aisles / departments.
+
+days since prior order 7,14,21, besonders, wöchentlich
+days since first order 30 60 90 besonders
+
+seasonality für obst wichtig. auch info da.
+
+
+wie typisch ist ein produkt für das department... evtl. weniger typische produkte öfter reordered.
+
+wie oft kauft ein kunde eher typische oder eher untypische produkte,
+wie oft eher aus typischen untypischen aisles oder deparments
+
+dann noch word2vec versuchen
+
+
+allgemeine idee: 
+
+- some features based on last order... d.h. zweites modell das immer nur ide vorherige order fitted
+- products daten an anderen train-usern schätzen lassen
+
+
+
