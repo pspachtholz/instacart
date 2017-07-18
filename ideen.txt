@@ -84,3 +84,60 @@ allgemeine idee:
 
 
 
+
+Expected F1 score to select products
+posted in Instacart Market Basket Analysis 8 hours ago
+[bronze]
+
+i have been struggling with this to boost my score compared with using fixed threshold. After running my binary model and getting the probs for each possible product i calculate the expected F1 score for each possible combination and select the one with highest expected F1 score. i will give an example
+
+         order_id  product_id      pred  reordered
+466492  3416942.0     13424.0  0.131574          0
+466493  3416942.0     32538.0  0.178045          0
+466494  3416942.0     44683.0  0.401903          0
+
+as you see if i would select the products based on some threshold (0.22) then i would predict the user to reorder product_id 44683 that had probability 0.401903 that would give me a zero F1 score because the ground truth in this case is 'None'. the user didnt reorder any product.
+
+now istead of this i calculated the expected F1 score for each combination (2^3 = 8). i constructed 3 arrays as following:
+
+the possible combinations:
+
+[['None'], [44683.0], [32538.0], [32538.0, 44683.0], [13424.0], [13424.0, 44683.0], [13424.0, 32538.0], [13424.0, 32538.0, 44683.0]]
+
+the probability of each combination (the sum is obviosly 1)
+
+[ 0.42692564,  0.28688152,  0.09247729,  0.06214203,  0.06468263,
+        0.04346483,  0.01401105,  0.00941501]
+
+the expected F1 score (8 x 8) array. meaning what is the expected F1 score for combination 1 if the ground truth is combination 1 - 8.
+
+array([[ 1.        ,  0.        ,  0.        ,  0.        ,  0.        ,
+         0.        ,  0.        ,  0.        ],
+       [ 0.        ,  1.        ,  0.        ,  0.66666667,  0.        ,
+         0.66666667,  0.        ,  0.5       ],
+       [ 0.        ,  0.        ,  1.        ,  0.66666667,  0.        ,
+         0.        ,  0.66666667,  0.5       ],
+       [ 0.        ,  0.66666667,  0.66666667,  1.        ,  0.        ,
+         0.5       ,  0.5       ,  0.8       ],
+       [ 0.        ,  0.        ,  0.        ,  0.        ,  1.        ,
+         0.66666667,  0.66666667,  0.5       ],
+       [ 0.        ,  0.66666667,  0.        ,  0.5       ,  0.66666667,
+         1.        ,  0.5       ,  0.8       ],
+       [ 0.        ,  0.        ,  0.66666667,  0.5       ,  0.66666667,
+         0.5       ,  1.        ,  0.8       ],
+       [ 0.        ,  0.5       ,  0.5       ,  0.8       ,  0.5       ,
+         0.8       ,  0.8       ,  1.        ]])
+
+and finaly the expected F1 score for each combination. F1(comb1) = F1(predict comb1|truth comb1) * P(truth is comb1) + F1(predict comb1|truth comb2) * P(truth is comb2)+.... + F1(predict comb1|truth comb8) * P(truth is comb8)
+
+[ 0.42692564,  0.3619936 ,  0.14795351,  0.35131785,  0.10770739,
+        0.32344948,  0.17911977,  0.32713006]
+
+and select the combination with highest expected F1 score.
+
+[i for i in combs[np.argmax(d3)]] = ['None']
+
+so using this method i get perfect F1 score of 1. I have checked manually few other examples and i see that this method produce either the same results as the fixed threshold or better (like in the example above). However, when i apply it to all orders with < 10 possible products to reorder from i get worse score than the fixed threshold.
+
+any idea why?
+

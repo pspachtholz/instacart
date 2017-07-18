@@ -119,6 +119,14 @@ prd <- merge(prd, products[,.(product_id, aisle_id, department_id)], all.x=TRUE)
 
 op <- merge(op, products[,.(product_id, aisle_id, department_id)], all.x=TRUE)
 
+# typical time till reorder
+tmp <- op[,.(cumsum=cumsum(days_since_prior_order), reordered), .(product_id, user_id, order_id)][reordered==1][,cumlag:=lag(cumsum),user_id]
+pd <- tmp[is.na(cumlag), cumlag:=0][,.(prod_typical_reorderdays = mean(cumsum-cumlag)), product_id]
+
+setkey(pd,product_id)
+prd <- merge(prd, pd, all.x=TRUE)
+
+
 rm(products)
 gc()
 
@@ -206,7 +214,8 @@ gc()
 
 data[,':=' (up_order_rate = up_orders / user_orders,
             up_orders_since_last_order = user_orders - up_last_order,
-            up_inpercent_afterfirst = up_orders / (user_orders - up_first_order + 1))]
+            up_inpercent_afterfirst = up_orders / (user_orders - up_first_order + 1),
+            up_delta_time_typicaltime = abs(train_time_since_last_order - prod_typical_reorderdays))]
 
 
 # merge in train order
