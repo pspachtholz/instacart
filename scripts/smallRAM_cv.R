@@ -24,13 +24,6 @@ f1 <- function (y, pred)
   score
 }
 
-f1_xgb <- function(pred, dtrain) {
-  y = getinfo(dtrain, "label")
-  dt <- data.table(user_id=train_users, y=y, pred=pred)
-  f1 <- dt[,.(f1 = f1(y,(pred>0.18)*1)),user_id][,.(f1=mean(f1))]
-  return (list(metric = "f1", value = f1$f1))
-}
-
 # Load Data ---------------------------------------------------------------
 path <- "../input"
 
@@ -77,18 +70,19 @@ setkeyv(op,c("user_id","product_id", "order_number"))
 op[,last_prior_order := max(order_number),.(user_id)]
 ord[,last_order := max(order_number),.(user_id)] # auch train/test orders mit drin
 
-#op<-op[last_order-order_number <= 2] #last order = last prior order
+#op<-op[last_prior_order-order_number <= 2] #last order = last prior order
 #ord<-ord[last_order-order_number <= 3]
 
 setkey(ord, user_id, order_number)
-ord[order(order_number), ':=' (order_days_sum = cumsum(ifelse(is.na(days_since_prior_order),0,days_since_prior_order))), .(user_id)]
+ord[order(order_number), ':=' (order_days_sum = cumsum(ifelse(is.na(days_since_prior_order),0,days_since_prior_order))),user_id][,':=' (order_days_max=max(order_days_sum)),user_id][, ':=' (order_day_year = 365-(order_days_max-order_days_sum)),user_id]
 
-op <- merge(op, ord[,.(user_id, order_number, order_days_sum)], all.x=T)
+op <- merge(op, ord[,.(user_id, order_number, order_days_sum, order_days_max, order_day_year)], all.x=T)
 
-op[order(user_id, product_id, order_number), ':=' ( product_time = 1:.N,
+op[order(user_id, product_id, order_number), ':=' ( 
+            product_time = 1:.N,
             first_order = min(order_number),
             second_order = order_number[2],
-            product_sum_order = .N), .(user_id,product_id)]
+            up_sum_order = .N), .(user_id,product_id)]
 
 op[(reordered==1 | product_time==1),':=' (order_days_lag=c(NA,order_days_sum[-.N])), .(user_id, product_id)]
 
@@ -102,17 +96,19 @@ prd <- op[, .(
               prod_first_orders = sum(product_time==1), 
               prod_second_orders = sum(product_time==2), 
               prod_add_to_cart = mean(add_to_cart_order), 
-              prod_inpercent_orders=mean(product_sum_order/last_prior_order), 
-              prod_inpercent_afterfirst = mean(product_sum_order/(last_prior_order-first_order+1)),
+              prod_inpercent_orders=mean(up_sum_order/last_prior_order), 
+              prod_inpercent_afterfirst = mean(up_sum_order/(last_prior_order-first_order+1)),
               prod_popularity = mean(uniqueN(user_id)),
-              prod_orders_till_reorder = mean(second_order-first_order,na.rm=T),
-              prod_days_till_reorder = mean(days_since_prior_order,na.rm=T)),by=product_id][,':=' (
+              prod_season = mean(order_day_year), 
+              prod_orders_till_first_reorder = mean(second_order-first_order,na.rm=T)
+              ), product_id][,':=' (
                              prod_reorder_probability = prod_second_orders / prod_first_orders,
                              prod_reorder_times = 1 + prod_reorders / prod_first_orders,
                              prod_reorder_ratio = prod_reorders / prod_orders,
                              prod_reorders = NULL, 
                              prod_first_orders = NULL,
-                             prod_second_orders = NULL)]
+                             prod_second_orders = NULL
+                             )]
 
 products[, ':=' (prod_organic = ifelse(str_detect(str_to_lower(product_name),'organic'),1,0))]
 products[, ':=' (product_name = NULL)]
@@ -130,7 +126,9 @@ gc()
 # Users -------------------------------------------------------------------
 users <- ord[eval_set=="prior", .(user_orders=.N,
                          user_period=sum(days_since_prior_order, na.rm = T),
-                         user_mean_days_since_prior = mean(days_since_prior_order, na.rm = T)), user_id]
+                         user_mean_days_since_prior = mean(days_since_prior_order, na.rm = T),
+                         user_std_days_since_prior_order = sd(days_since_prior_order, na.rm=T)
+                        ), user_id]
 
 us <- op[,.(
   user_total_products = .N,
@@ -160,7 +158,8 @@ us <- ord[eval_set != "prior", .(user_id,
                                  train_time_since_last_order = days_since_prior_order,
                                  train_dow = order_dow,
                                  train_how = order_hour_of_day,
-                                 train_ordernum = order_number)][,':=' (train_time_0 = (train_time_since_last_order==0)*1)]
+                                 train_ordernum = order_number,
+                                 train_season = order_day_year)]
 
 setkey(users, user_id)
 setkey(us, user_id)
@@ -201,7 +200,10 @@ data <- merge(data,prd,all=FALSE)
 
 rm(op, ord)
 
-data[,':=' (up_diff_train_typical = abs(train_time_since_last_order-up_avg_days_since_reorder))]
+data[,':=' (
+  up_diff_train_typical = abs(train_time_since_last_order-up_avg_days_since_reorder),
+  up_perc_diff_train_typical = train_time_since_last_order/up_avg_days_since_reorder
+  )]
 
 #setkey(dep,department_id)
 #setkey(data,department_id)
@@ -225,22 +227,19 @@ rm(opt)
 gc()
 
 
+# do it the data.table way
 
 # Train / Test datasets ---------------------------------------------------
-train <- as.data.frame(data[data$eval_set == "train",])
+train <- data[eval_set == "train"]
 
-train_userid <- train$user_id
+train_userid <- train[,user_id]
+train[,':=' (eval_set=NULL, product_id=NULL)]
+train[is.na(reordered), ':=' (reordered=0)]
 
-train$eval_set <- NULL
-train$product_id <- NULL
-train$order_id <- NULL
-train$reordered[is.na(train$reordered)] <- 0
 
-test <- as.data.frame(data[data$eval_set == "test",])
-test_user_id <- test$user_id
-test$eval_set <- NULL
-test$user_id <- NULL
-test$reordered <- NULL
+test <-data[eval_set == "test"]
+test[,':=' (eval_set=NULL, reordered=NULL)]
+
 
 rm(data)
 gc()
@@ -279,7 +278,7 @@ for (i in 1:n_fold) {
 }
 
 # Do the CV ------------------------------------
-
+threshold <- 0.20
 n_rounds <- 80
 calc_f1_every_n <- 10
 res<-list()
@@ -289,9 +288,9 @@ for (i in 1:length(folds)) {
   cat('Training on fold', i,'...\n')
   cv_train <- train[-folds[[i]],]
   cv_val <- train[folds[[i]],]
-  dtrain <- xgb.DMatrix(data.matrix(select(cv_train,-user_id,-reordered)),label=cv_train$reordered)
-  dval <- xgb.DMatrix(data.matrix(select(cv_val,-user_id,-reordered)),label=cv_val$reordered)  
-  watchlist <- list(train = dtrain)
+  dtrain <- xgb.DMatrix(data.matrix(select(cv_train,-user_id,-order_id,-reordered)),label=cv_train$reordered)
+  dval <- xgb.DMatrix(data.matrix(select(cv_val,-user_id,-order_id,-reordered)),label=cv_val$reordered)  
+  watchlist <- list(train=dtrain, val=dval)
   
   train_users <- cv_train$user_id
   
@@ -306,9 +305,9 @@ for (i in 1:length(folds)) {
     y <- getinfo(dval,'label')
     valid_users <- cv_val$user_id
   
-    dt <- data.table(user_id=valid_users, y=y, pred=pred)
-    f1_score <- dt[,.(f1score = f1(y,(pred>0.18)*1)), user_id][,.(f1_mean=mean(f1score))]
-    cat('val-f1: ', f1_score$f1_mean, '\n')
+    dt <- data.table(user_id=valid_users, y=y, pred=pred, ypred=(pred>threshold)*1)
+    f1_score <- dt[,.(f1score = f1(y,ypred)), user_id][,.(f1_mean=mean(f1score))]
+    cat('val-f1: ', f1_score$f1_mean, 'mean sum_pred: ',dt[,.(sp = sum(ypred)),user_id][,.(mean_sp = mean(sp))]$mean_sp, '\n')
     res$f1[j,i] <- f1_score$f1_mean
     res$mean_reordered[j,i] <- mean(cv_val$reordered)    
   }
@@ -322,7 +321,7 @@ n_rounds <- best_iter
 
 
 # Fit the Model to all training data -------------------------------------
-threshold = 0.18
+
 
 dtrain <- xgb.DMatrix(as.matrix(train %>% select(-user_id,-reordered)), label = train$reordered)
 
@@ -388,12 +387,11 @@ gc()
 
 
 # Apply model to test data ------------------------------------------------
-dtest <- xgb.DMatrix(as.matrix(test %>% select(-order_id, -product_id)))
+dtest <- xgb.DMatrix(as.matrix(test[,-c("user_id","product_id"),with=FALSE]))
 test$pred <- predict(model, dtest)
-test$user_id <- test_user_id
+
 
 # Threshold ---------------------------------------------------------------
-test<-as.data.table(test)
 test <- test[order(user_id,-pred)]
 test[,':=' (top = 1:.N), user_id]
 test[,':=' (pred_basket = sum(pred)), user_id]
@@ -403,7 +401,8 @@ test[pred_basket<=30,':=' (adapted_basket = pred_basket)]
 test[, ':=' (reordered=ifelse(top<=adapted_basket,1,0))]
 #test[, ':=' (reordered=ifelse(top<=user_average_basket*user_reorder_ratio,1,0))]
 #close_orders <- test %>% group_by(order_id) %>% summarize(m=mean(reordered),mx=max(reordered),s=sum(reordered>threshold)) %>% filter(between(m,0.9*threshold,1.1*threshold) & s <= 5 & mx <= 0.35) %>% select(order_id) %>% .[[1]]
-#test$reordered <- (test$pred > threshold) * 1
+
+test[,reordered:=(pred>0.2)*1]
 
 # all reorderes to 1 -----------------------------------------------------
 #test[user_id %in% reorder_users, ':=' (reordered=1)]
@@ -413,12 +412,21 @@ submission <- test[reordered==1,.(products = paste(product_id, collapse = " ")),
 # add None to close orders -----------------------------------------------
 #new_submission <- submission %>% mutate(products = ifelse(order_id %in% close_orders, str_c(products,'None', collapse = " "),products))
 
-missing <- data.frame(
+
+
+missing <- data.table(
   order_id = unique(test$order_id[!test$order_id %in% submission$order_id]),
   products = "None"
 )
 
-submission <- submission %>% bind_rows(missing) %>% arrange(order_id)
-fwrite(submission, file = "submit.csv")
+submission <- rbindlist(list(submission, missing))
+
+# add none to close orders
+tmpp <- dt[order(-pred)][,omp := 1-pred][,p_none := prod(omp), order_id]
+close_orders <- tmpp[p_none>0.2]$order_id
+
+submission[]
+
+fwrite(submission[order(order_id)], file = "submit.csv")
 
 

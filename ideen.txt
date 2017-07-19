@@ -18,6 +18,7 @@ features:
 - recency jv24
 
 
+Zeittrend: Anzahl der Produkte des Users... abnehmend zunehmend
 
     User Features: #Products purchased, #Orders made, frequency and recency of orders, #Aisle purchased from, #Department purchased from, frequency and recency of reorders, tenure, mean order size, etc.
 
@@ -141,3 +142,22 @@ so using this method i get perfect F1 score of 1. I have checked manually few ot
 
 any idea why?
 
+How did you calculate the case of ground truth None? If you calculate as the competition's evaluation metric does, it is not expected F1 by definition. You have to use expected F1 equals zero for that case, i.e., you only sum up all the expectation for the other cases, and treat Nones externally.
+
+However, that raises another issue: in optimizing (the formally defined) F1-score, it is always good to have at least one product in your reordered basket, which is not the case here. Thus...
+Sameh Faidi
+Sameh Faidi•(24th in this Competition)•a day ago•
+Options
+•
+Reply
+
+P(truth is none) = (1- P(prod1)) * (1-P(prod2)) * (1-P(prod3)) and if you predict None and the ground truth is None then the expected F1 score is P(truth is none)
+AlphaMeow
+AlphaMeow•(15th in this Competition)•29 minutes ago•
+Options
+•
+Reply
+
+@Sameh Faidi
+
+Yes, I see what you mean. My suggestion is, treating the none case by something else outside F1-score optimization. For F1-expectation, you only calculate the cases where you have at least one product in the basket(i.e., assuming the None case give you F1 value = 0 all the time). 
