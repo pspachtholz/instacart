@@ -187,7 +187,7 @@ data <- op[, .(
   up_last_order_dow = order_dow[order_number==max(order_number)],
   up_last_order_hod = order_hour_of_day[order_number==max(order_number)],
   up_avg_cart_position = mean(add_to_cart_order),
-  up_avg_days_since_reorder = mean(order_days_sum-order_days_lag)),
+  up_avg_days_since_reorder = mean(order_days_sum-order_days_lag,na.rm=T)),
   .(user_id, product_id)]
 
 setkey(users,user_id)
@@ -201,7 +201,7 @@ data <- merge(data,prd,all=FALSE)
 
 rm(op, ord)
 
-data[,':=' (up_diff_train_typical = abs(train_time_since_last_order-up_avg_days_since_reorder),cumsum.x=NULL, cumsum.y=NULL)]
+data[,':=' (up_diff_train_typical = abs(train_time_since_last_order-up_avg_days_since_reorder))]
 
 #setkey(dep,department_id)
 #setkey(data,department_id)
@@ -213,8 +213,7 @@ gc()
 
 data[,':=' (up_order_rate = up_orders / user_orders,
             up_orders_since_last_order = user_orders - up_last_order,
-            up_inpercent_afterfirst = up_orders / (user_orders - up_first_order + 1),
-            up_delta_time_typicaltime = abs(train_time_since_last_order - prod_typical_reorderdays))]
+            up_inpercent_afterfirst = up_orders / (user_orders - up_first_order + 1))]
 
 
 # merge in train order
