@@ -74,17 +74,23 @@ opt<-opt[user_id %in% all_users]
 ord<-ord[user_id %in% all_users]
 
 setkeyv(op,c("user_id","product_id", "order_number"))
-op[,last_order := max(order_number),.(user_id)]
-ord[,last_order := max(order_number),.(user_id)]
+op[,last_prior_order := max(order_number),.(user_id)]
+ord[,last_order := max(order_number),.(user_id)] # auch train/test orders mit drin
 
-op<-op[last_order-order_number <= 3]
-ord<-ord[last_order-order_number <= 3]
+#op<-op[last_order-order_number <= 2] #last order = last prior order
+#ord<-ord[last_order-order_number <= 3]
 
-op[, ':=' ( product_time = 1:.N,
+setkey(ord, user_id, order_number)
+ord[order(order_number), ':=' (order_days_sum = cumsum(ifelse(is.na(days_since_prior_order),0,days_since_prior_order))), .(user_id)]
+
+op <- merge(op, ord[,.(user_id, order_number, order_days_sum)], all.x=T)
+
+op[order(user_id, product_id, order_number), ':=' ( product_time = 1:.N,
             first_order = min(order_number),
             second_order = order_number[2],
-            sum_order = .N), .(user_id,product_id)]
+            product_sum_order = .N), .(user_id,product_id)]
 
+op[(reordered==1 | product_time==1),':=' (order_days_lag=c(NA,order_days_sum[-.N])), .(user_id, product_id)]
 
 
 # Products ----------------------------------------------------------------
@@ -96,8 +102,8 @@ prd <- op[, .(
               prod_first_orders = sum(product_time==1), 
               prod_second_orders = sum(product_time==2), 
               prod_add_to_cart = mean(add_to_cart_order), 
-              prod_inpercent_orders=mean(sum_order/num_order), 
-              prod_inpercent_afterfirst = mean(sum_order/(num_order-first_order+1)),
+              prod_inpercent_orders=mean(product_sum_order/last_prior_order), 
+              prod_inpercent_afterfirst = mean(product_sum_order/(last_prior_order-first_order+1)),
               prod_popularity = mean(uniqueN(user_id)),
               prod_orders_till_reorder = mean(second_order-first_order,na.rm=T),
               prod_days_till_reorder = mean(days_since_prior_order,na.rm=T)),by=product_id][,':=' (
@@ -108,7 +114,6 @@ prd <- op[, .(
                              prod_first_orders = NULL,
                              prod_second_orders = NULL)]
 
-products <- as.data.table(products)
 products[, ':=' (prod_organic = ifelse(str_detect(str_to_lower(product_name),'organic'),1,0))]
 products[, ':=' (product_name = NULL)]
 setkey(products,product_id)
@@ -118,15 +123,7 @@ prd <- merge(prd, products[,.(product_id, aisle_id, department_id)], all.x=TRUE)
 
 op <- merge(op, products[,.(product_id, aisle_id, department_id)], all.x=TRUE)
 
-# typical time till reorder
-tmp <- op[,.(cumsum=cumsum(days_since_prior_order), reordered), .(product_id, user_id, order_id)][reordered==1][,cumlag:=lag(cumsum),user_id]
-pd <- tmp[is.na(cumlag), cumlag:=0][,.(prod_typical_reorderdays = mean(cumsum-cumlag)), product_id]
-
-setkey(pd,product_id)
-prd <- merge(prd, pd, all.x=TRUE)
-
-
-rm(products, tmp, pd)
+rm(products)
 gc()
 
 
@@ -152,7 +149,7 @@ users <- merge(users, us, all=FALSE)
 us <- op[,.(user_order_products = .N),.(user_id,order_id)][,.(user_order_products_min=min(user_order_products),user_order_products_max=max(user_order_products),user_order_products_sd=sd(user_order_products)), user_id]
 users <- merge(users, us, all=FALSE)
 
-us <- op[(num_order-order_number)<=1, .(user_order_products_2 = .N, mean_reordered=mean(reordered)), .(user_id, order_id)][,.(user_order_products_2 = mean(user_order_products_2), user_reorder_rate_2=mean(mean_reordered)), user_id]
+us <- op[(last_prior_order-order_number)<=1, .(user_order_products_2 = .N, mean_reordered=mean(reordered)), .(user_id, order_id)][,.(user_order_products_2 = mean(user_order_products_2), user_reorder_rate_2=mean(mean_reordered)), user_id]
 users <- merge(users, us, all=FALSE)
 
 users[,':=' (user_average_basket = user_total_products / user_orders)]
@@ -189,23 +186,26 @@ data <- op[, .(
   up_last_order = max(order_number), 
   up_last_order_dow = order_dow[order_number==max(order_number)],
   up_last_order_hod = order_hour_of_day[order_number==max(order_number)],
-  up_avg_cart_position = mean(add_to_cart_order)),
+  up_avg_cart_position = mean(add_to_cart_order),
+  up_avg_days_since_reorder = mean(order_days_sum-order_days_lag)),
   .(user_id, product_id)]
-
-rm(op, ord)
-
-
-setkey(prd,product_id)
-setkey(data,product_id)
-data <- merge(data,prd,all=FALSE)
 
 setkey(users,user_id)
 setkey(data,user_id)
 data <- merge(data,users,all=FALSE)
 
-setkey(dep,department_id)
-setkey(data,department_id)
-data <- merge(data,dep,all=FALSE)
+setkey(prd,product_id)
+setkey(data,product_id)
+data <- merge(data,prd,all=FALSE)
+
+
+rm(op, ord)
+
+data[,':=' (up_diff_train_typical = abs(train_time_since_last_order-up_avg_days_since_reorder),cumsum.x=NULL, cumsum.y=NULL)]
+
+#setkey(dep,department_id)
+#setkey(data,department_id)
+#data <- merge(data,dep,all=FALSE)
 
 
 rm(prd, users, dep)
