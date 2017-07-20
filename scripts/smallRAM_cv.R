@@ -211,6 +211,11 @@ data <- op[, .(
   up_avg_days_since_reorder = mean(order_days_sum-order_days_lag,na.rm=T)),
   .(user_id, product_id)]
 
+tmp <- op[, .(up_days_till_first_reorder=ifelse(is.null(order_days_sum[product_time==2]),NA,order_days_sum[product_time==2]-order_days_sum[product_time==1])), .(user_id, product_id)]
+data <- merge(data,tmp, all.x=TRUE)
+
+rm(tmp)
+gc()
 
 setkey(users,user_id)
 setkey(data,user_id)
@@ -278,7 +283,7 @@ names(train)
 params <- list(
   "objective"           = "reg:logistic",
   "eval_metric"         = "logloss",
-  "eta"                 = 0.1,
+  "eta"                 = 0.03,
   "max_depth"           = 6,
   "min_child_weight"    = 10,
   "gamma"               = 0.7,
@@ -306,7 +311,7 @@ for (i in 1:n_fold) {
 
 # Do the CV ------------------------------------
 threshold <- 0.20
-n_rounds <- 80
+n_rounds <- 300
 calc_f1_every_n <- 10
 res<-list()
 res$f1 <- matrix(0,n_rounds/calc_f1_every_n,n_fold)
@@ -355,7 +360,8 @@ model <- xgb.train(data = dtrain, params = params, nrounds = n_rounds, watchlist
 
 importance <- xgb.importance(colnames(dtrain), model = model)
 #xgb.ggplot.importance(importance)+theme(axis.text.y = element_text(hjust = 0))
-ggplot(importance,aes(y=Gain,x=reorder(Feature,Gain)))+geom_bar(stat="identity")+coord_flip()
+ggplot(importance,aes(y=Gain,x=reorder(Feature,Gain)))+geom_bar(stat="identity")+coord_flip()+theme(axis.text.y = element_text(hjust = 0))
+ggplot(importance,aes(y=Gain,x=reorder(Feature,Feature)))+geom_bar(stat="identity")+coord_flip()+theme(axis.text.y = element_text(hjust = 0))
 
 # Look at predictions ---------------------------------------------------------------
 train<-as.data.table(train)
@@ -411,7 +417,7 @@ gc()
 
 
 # Apply model to test data ------------------------------------------------
-dtest <- xgb.DMatrix(as.matrix(test[,-c("user_id","product_id"),with=FALSE]))
+dtest <- xgb.DMatrix(as.matrix(test[,-c("user_id","order_id", "product_id"),with=FALSE]))
 test$pred <- predict(model, dtest)
 
 
@@ -452,5 +458,5 @@ close_orders <- tmpp[p_none>0.2]$order_id
 submission[]
 
 fwrite(submission[order(order_id)], file = "submit.csv")
-
+rs
 
