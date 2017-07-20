@@ -98,7 +98,8 @@ prd <- op[, .(
               prod_inpercent_afterfirst = mean(up_sum_order/(last_prior_order-first_order+1)),
               prod_popularity = mean(uniqueN(user_id)),
               prod_season = mean(order_day_year), 
-              prod_orders_till_first_reorder = mean(second_order-first_order,na.rm=T)
+              prod_orders_till_first_reorder = mean(second_order-first_order,na.rm=T),
+              prod_orders_till_second_reorder = mean(third_order-second_order,na.rm=T)
               ), product_id][,':=' (
                              prod_reorder_probability = prod_second_orders / prod_first_orders,
                              prod_reorder_times = 1 + prod_reorders / prod_first_orders,
@@ -118,7 +119,7 @@ ord<-ord[user_id %in% all_users]
 setkey(products,product_id)
 setkey(prd, product_id)
 setkey(op, product_id)
-#prd <- merge(prd, products[,.(product_id, aisle_id, department_id)], all.x=TRUE)
+prd <- merge(prd, products[,.(product_id, aisle_id, department_id)], all.x=TRUE)
 
 op <- merge(op, products[,.(product_id, aisle_id, department_id)], all.x=TRUE)
 
@@ -141,10 +142,7 @@ us <- op[,.(
   user_distinct_depts = uniqueN(department_id)
 ), user_id][,':=' (user_pct_distinct_products = user_distinct_products / user_total_products,
                    user_pct_distinct_aisles = user_distinct_aisles / user_total_products,
-                   user_pct_distinct_depts = user_distinct_depts / user_total_products,
-                   user_distinct_products = NULL,
-                   user_distinct_aisles = NULL,
-                   user_distinct_depts = NULL)]
+                   user_pct_distinct_depts = user_distinct_depts / user_total_products)]
 
 users <- merge(users, us, all=FALSE)
 
@@ -168,8 +166,7 @@ users <- merge(users, us, all=FALSE)
 users[, ':=' (
   user_recent_orders_factor = user_order_products_mean_last3/user_order_products_mean,
   user_recent_reorder_factor = user_reorder_ratio_last3 / user_reorder_ratio,
-  user_activity_products = ifelse(user_period==0,0,user_total_products/user_period),
-  user_activity_orders = ifelse(user_period==0,0,user_orders/user_period),
+  user_activity = ifelse(user_period==0,0,user_total_products/user_period),
   user_order_products_mean_last3 = NULL,
   user_reorder_ratio_last3 = NULL
   )]
@@ -180,7 +177,8 @@ us <- ord[eval_set != "prior", .(
       eval_set,
       train_time_since_last_order = days_since_prior_order,
       train_dow = order_dow,
-      train_hod= order_hour_of_day,
+      train_how = order_hour_of_day,
+      train_ordernum = order_number,
       train_season = order_day_year)]
 
 setkey(users, user_id)
@@ -212,6 +210,7 @@ data <- op[, .(
   .(user_id, product_id)]
 
 
+
 setkey(users,user_id)
 setkey(data,user_id)
 data <- merge(data,users,all=FALSE)
@@ -225,6 +224,7 @@ data[,':=' (
 setkey(prd,product_id)
 setkey(data,product_id)
 data <- merge(data,prd,all=FALSE)
+
 
 rm(op, ord)
 
@@ -242,8 +242,8 @@ gc()
 
 data[,':=' (up_order_rate = up_orders / user_orders,
             up_orders_since_last_order = user_orders - up_last_order,
-            up_inpercent_afterfirst = up_orders / (user_orders - up_first_order + 1)
-            )]
+            up_inpercent_afterfirst = up_orders / (user_orders - up_first_order + 1),
+            up_popularity = up_orders / user_total_products)]
 
 
 # merge in train order
@@ -260,7 +260,8 @@ gc()
 # Train / Test datasets ---------------------------------------------------
 train <- data[eval_set == "train"]
 
-train[,':=' (eval_set=NULL)]
+train_userid <- train[,user_id]
+train[,':=' (eval_set=NULL, product_id=NULL)]
 train[is.na(reordered), ':=' (reordered=0)]
 
 
@@ -272,12 +273,12 @@ rm(data)
 gc()
 
 # Model fitting ---------------------------------------------------------
-names(train)
+colnames(train)
 
 # Setting params for fitting
 params <- list(
   "objective"           = "reg:logistic",
-  "eval_metric"         = "logloss",
+  "eval_metric"         = "auc",
   "eta"                 = 0.1,
   "max_depth"           = 6,
   "min_child_weight"    = 10,
@@ -293,7 +294,7 @@ users_per_fold <- 5000
 n_fold <- 3
 
 # create the folds
-val_users_random <- sample(unique(train[,user_id]), size = n_fold*users_per_fold, replace = FALSE)
+val_users_random <- sample(unique(train_userid), size = n_fold*users_per_fold, replace = FALSE)
 if (n_fold ==1) {
   val_user_groups <- 1
 } else {
@@ -301,7 +302,7 @@ if (n_fold ==1) {
 }
 folds <- list()
 for (i in 1:n_fold) {
-  folds[[i]] <- which(train[,user_id] %in% val_users_random[val_user_groups==i])
+  folds[[i]] <- which(train_userid %in% val_users_random[val_user_groups==i])
 }
 
 # Do the CV ------------------------------------
@@ -315,8 +316,8 @@ for (i in 1:length(folds)) {
   cat('Training on fold', i,'...\n')
   cv_train <- train[-folds[[i]],]
   cv_val <- train[folds[[i]],]
-  dtrain <- xgb.DMatrix(data.matrix(select(cv_train,-user_id,-product_id,-order_id,-reordered)),label=cv_train$reordered)
-  dval <- xgb.DMatrix(data.matrix(select(cv_val,-user_id,-product_id,-order_id,-reordered)),label=cv_val$reordered)  
+  dtrain <- xgb.DMatrix(data.matrix(select(cv_train,-user_id,-order_id,-reordered)),label=cv_train$reordered)
+  dval <- xgb.DMatrix(data.matrix(select(cv_val,-user_id,-order_id,-reordered)),label=cv_val$reordered)  
   watchlist <- list(train=dtrain, val=dval)
   
   train_users <- cv_train$user_id
@@ -348,7 +349,7 @@ best_iter <- which.max(results$m)*calc_f1_every_n
 n_rounds <- best_iter
 
 # Fit the Model to all training data -------------------------------------
-dtrain <- xgb.DMatrix(as.matrix(train %>% select(-user_id,-product_id,-order_id,-reordered)), label = train$reordered)
+dtrain <- xgb.DMatrix(as.matrix(train %>% select(-user_id,-reordered)), label = train$reordered)
 watchlist <- list(train = dtrain)
 
 model <- xgb.train(data = dtrain, params = params, nrounds = n_rounds, watchlist=watchlist)

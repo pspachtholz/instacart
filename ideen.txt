@@ -14,9 +14,9 @@ so viele none orders in train 0.06555953
 I also use the mean and std of cart\dow\hour\days on users, and make the dis of train/test order.
 
 features: 
-- standardabweichung von basket size.
 - recency jv24
 
+users favorite product
 
 Zeittrend: Anzahl der Produkte des Users... abnehmend zunehmend
 
