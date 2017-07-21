@@ -432,7 +432,7 @@ test[, ':=' (reordered=ifelse(top<=adapted_basket,1,0))]
 #test[, ':=' (reordered=ifelse(top<=user_average_basket*user_reorder_ratio,1,0))]
 #close_orders <- test %>% group_by(order_id) %>% summarize(m=mean(reordered),mx=max(reordered),s=sum(reordered>threshold)) %>% filter(between(m,0.9*threshold,1.1*threshold) & s <= 5 & mx <= 0.35) %>% select(order_id) %>% .[[1]]
 
-test[,reordered:=(pred>0.2)*1]
+test[,reordered:=(pred>0.21)*1]
 
 # all reorderes to 1 -----------------------------------------------------
 #test[user_id %in% reorder_users, ':=' (reordered=1)]
@@ -458,5 +458,5 @@ close_orders <- tmpp[p_none>0.2]$order_id
 submission[]
 
 fwrite(submission[order(order_id)], file = "submit.csv")
-rs
+
 
