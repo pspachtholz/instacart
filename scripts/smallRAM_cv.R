@@ -125,6 +125,15 @@ op <- merge(op, products[,.(product_id, aisle_id, department_id)], all.x=TRUE)
 rm(products)
 gc()
 
+# Order typicality --------------------------------------------------------
+
+od <- ord[order(user_id, order_number), .(
+  order_dow_typicality = (sum(order_dow==order_dow[.N])-1)/.N)
+  , .(user_id)]
+
+tmp <- ord[order(user_id,order_number), .(order_number,
+  order_hod_typicality = order_hour_of_day[1:.N])
+, .(user_id)]
 
 # Users -------------------------------------------------------------------
 users <- ord[eval_set=="prior", .(user_orders=.N,
