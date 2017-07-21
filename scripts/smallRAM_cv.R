@@ -133,6 +133,15 @@ users <- ord[eval_set=="prior", .(user_orders=.N,
                          user_std_days_since_prior_order = sd(days_since_prior_order, na.rm=T)
                          ), user_id]
 
+tmp <- op[,.(order_sum_products = .N, order_number),.(user_id, order_id)]
+tmp[, ':=' (user_mean_basket = mean(order_sum_products), user_mean_order_number = mean(order_number)), user_id]
+tmpp <- tmp[, .(order_sum_products = mean(order_sum_products), user_mean_basket = mean(user_mean_basket), user_mean_order_number = mean(user_mean_order_number)), .(user_id, order_number)]
+us <- tmpp[, .(user_slope_basket = sum((order_sum_products-user_mean_basket)*(order_number-user_mean_order_number)) / sum((order_number-user_mean_order_number)^2)), user_id]
+
+users <- merge(users,us)
+rm(tmp, tmpp)
+gc()
+
 us <- op[,.(
   user_total_products = .N,
   user_reorder_ratio = sum(reordered == 1) / sum(order_number > 1),
@@ -287,7 +296,7 @@ params <- list(
   "max_depth"           = 6,
   "min_child_weight"    = 10,
   "gamma"               = 0.7,
-  "subsample"           = 0.95,
+  "subsample"           = 0.9,
   "colsample_bytree"    = 0.95
 )
 
@@ -311,7 +320,7 @@ for (i in 1:n_fold) {
 
 # Do the CV ------------------------------------
 threshold <- 0.20
-n_rounds <- 300
+n_rounds <- 200
 calc_f1_every_n <- 10
 res<-list()
 res$f1 <- matrix(0,n_rounds/calc_f1_every_n,n_fold)
@@ -432,7 +441,7 @@ test[, ':=' (reordered=ifelse(top<=adapted_basket,1,0))]
 #test[, ':=' (reordered=ifelse(top<=user_average_basket*user_reorder_ratio,1,0))]
 #close_orders <- test %>% group_by(order_id) %>% summarize(m=mean(reordered),mx=max(reordered),s=sum(reordered>threshold)) %>% filter(between(m,0.9*threshold,1.1*threshold) & s <= 5 & mx <= 0.35) %>% select(order_id) %>% .[[1]]
 
-test[,reordered:=(pred>0.21)*1]
+test[,reordered:=(pred>0.2)*1]
 
 # all reorderes to 1 -----------------------------------------------------
 #test[user_id %in% reorder_users, ':=' (reordered=1)]
@@ -455,7 +464,6 @@ submission <- rbindlist(list(submission, missing))
 tmpp <- dt[order(-pred)][,omp := 1-pred][,p_none := prod(omp), order_id]
 close_orders <- tmpp[p_none>0.2]$order_id
 
-submission[]
 
 fwrite(submission[order(order_id)], file = "submit.csv")
 
