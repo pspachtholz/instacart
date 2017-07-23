@@ -132,8 +132,17 @@ od <- ord[order(user_id, order_number), .(
   , .(user_id)]
 
 tmp <- ord[order(user_id,order_number), .(order_number,
-  order_hod_typicality = order_hour_of_day[1:.N])
+  order_hod_typicality = order_hour_of_day[1:.N]-order_hour_of_day[.N])
 , .(user_id)]
+
+tmp[order_hod_typicality < -12,':=' (order_hod_typicality2=order_hod_typicality+24)]
+tmp[order_hod_typicality > 12,':=' (order_hod_typicality2=order_hod_typicality-24)]
+tmp[between(order_hod_typicality,-12,12),':=' (order_hod_typicality2=order_hod_typicality*1)]
+tmp[,':=' (order_hod_typicality = order_hod_typicality2)]
+tmp[,':=' (order_hod_typicality2 = NULL)]
+tmp <- tmp[, .(order_hod_typicality = mean(order_hod_typicality)), user_id]
+
+od <- merge(od, tmp, by="user_id")
 
 # Users -------------------------------------------------------------------
 users <- ord[eval_set=="prior", .(user_orders=.N,
@@ -204,6 +213,8 @@ us <- ord[eval_set != "prior", .(
 setkey(users, user_id)
 setkey(us, user_id)
 users <- merge(users, us, all=FALSE)
+
+users <- merge(users, od, all=FALSE)
 
 rm(us)
 gc()
@@ -329,7 +340,7 @@ for (i in 1:n_fold) {
 
 # Do the CV ------------------------------------
 threshold <- 0.20
-n_rounds <- 200
+n_rounds <- 150
 calc_f1_every_n <- 10
 res<-list()
 res$f1 <- matrix(0,n_rounds/calc_f1_every_n,n_fold)
