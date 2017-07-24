@@ -126,10 +126,17 @@ rm(products)
 gc()
 
 # Order typicality --------------------------------------------------------
-
-od <- ord[order(user_id, order_number), .(
-  order_dow_typicality = (sum(order_dow==order_dow[.N])-1)/.N)
+od <- ord[order(user_id, order_number), .(order_dow_typicality = (order_dow-order_dow[.N])*1), user_id][
+        order_dow_typicality<= -4, ':=' (order_dow_typicality=order_dow_typicality+7)][
+          order_dow_typicality >= 4, ':=' (order_dow_typicality=order_dow_typicality-7)
+        ]
+tmp <- ord[order(user_id, order_number), .(
+  order_dow_typicality2 = (sum(order_dow==order_dow[.N])-1)/.N)
   , .(user_id)]
+
+od <- merge(od,tmp)
+
+od <- od[, .(order_dow_typ = mean(abs(order_dow_typicality)), order_dow_typ2 = mean(order_dow_typicality2)), user_id]
 
 tmp <- ord[order(user_id,order_number), .(order_number,
   order_hod_typicality = order_hour_of_day[1:.N]-order_hour_of_day[.N])
