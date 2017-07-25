@@ -14,6 +14,8 @@ vielleicht gibt es ein produkt an dem man promotion zeitraum erkennt, dann kšnnt
 
 I also use the mean and std of cart\dow\hour\days on users, and make the dis of train/test order.
 
+faron - order streak: wie oft am stück geordert
+
 features: 
 - recency jv24
 

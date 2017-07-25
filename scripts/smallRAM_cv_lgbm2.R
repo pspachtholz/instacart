@@ -433,6 +433,7 @@ model <- lgb.train(data = dtrain, params = params, nrounds = n_rounds, valids=va
 xtest <- as.matrix(test[,-c("user_id","order_id", "product_id"),with=FALSE])
 test$pred <- predict(model, xtest)
 
+best_iter <- 130
 
 # Get oof predictions for best round ----------------------------------------
 train$oof_pred <- NA
@@ -484,25 +485,48 @@ f1score<-submission[,.(f1score = f1m(y,ypred)), order_id][,.(f1score=mean(f1scor
 f1score
 ## i was here 
 
-train<-train[order(user_id, -oof_pred)]
-tmp <- train[user_id==30, .(y=reordered,probs=oof_pred)]
-y<-tmp$y
-probs <- tmp$probs
-f1e(tmp$y, tmp$probs)
-
-f1q <- function(y,pred){
+f1q <- function(y,pred,addnone){
+  if(addnone){
+    pred <- c(pred,1)
+    if (all(y==0)) {
+      y <- c(y,1)
+    } else {
+      y <- c(y,0)
+    }
+  }
+  tp <- sum(pred==1 & y == 1)
+  fp <- sum(pred==1 & y == 0)
+  fn <- sum(pred==0 & y == 1)
   
+  precision <- ifelse ((tp==0 & fp==0), 0, tp/(tp+fp)) # no reorders predicted
+  recall <- ifelse ((tp==0 & fn==0), 0, tp/(tp+fn)) # no products reordered
+  
+  score <- ifelse((precision==0 & recall==0),0,2*precision*recall/(precision+recall))
+  score
 }
-f1e <- function(y, probs) {
-  probs=c(probs,prod(1-probs))
-  gt <- expand.grid(c(0,1),c(0,1))
-  gt[,3] <- (rowSums(gt)==0)*1 # none
-  p <- probs[c(1:2,length(probs))]
+
+f1e <- function(y, probs,k) {
+  gt <- do.call("CJ",rep(list(c(0,1)),k))
+  p <- probs[1:k]
   
-  ysel <- rep(1,3)
-  tmp <- apply(as.matrix(gt) * p,2,prod)
-  res<-apply(gt,1,FUN = function(x) f1(x,ysel))
-  t(tmp) %*% res
+  tmp <- gt*2-1
+  tmp <- abs(-sweep(gt,2,p, FUN="+")+1)
+  
+  ysel <- rep(1,k)
+  tmp <- apply(tmp,1,prod)
+  res<-matrix(0,2,2^k)
+  res[1,]<-apply(gt,1,FUN = function(x) f1q(x,ysel,1))
+  res[2,]<-apply(gt,1,FUN = function(x) f1q(x,ysel,0))  
+  res <- res %*% tmp
+  dt <- data.table(k=k,none=which.max(res),f1=res[which.max(res)])
+}
+
+train<-train[order(user_id, -oof_pred)]
+tmp <- train[user_id==712, .(y=reordered,probs=oof_pred)]
+
+res <- data.table(k=integer(),none=integer(), f1=double())
+for (i in 1:nrow(tmp)) {
+  res <- rbindlist(list(res,f1e(tmp$y,tmp$probs,i)))
 }
 
 
