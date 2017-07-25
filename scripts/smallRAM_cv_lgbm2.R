@@ -22,22 +22,19 @@ f1 <- function (y, pred)
   score
 }
 
-LGB_CV_Predict <- function(lgb_cv, data, num_iteration = NULL, folds) {
-  if (is.null(num_iteration)) {
-    num_iteration <- lgb_cv$best_iter
-  }
-  cv_pred_mat <- foreach::foreach(i = seq_along(lgb_cv$boosters), .combine = "rbind") %do% {
-    lgb_tree <- lgb_cv$boosters[[i]][[1]]
-    predict(lgb_tree, 
-            data[folds[[i]],], 
-            num_iteration = num_iteration, 
-            rawscore = FALSE, predleaf = FALSE, header = FALSE, reshape = TRUE)
-  }
-  if (ncol(cv_pred_mat) == 1) {
-    as.double(cv_pred_mat)[order(unlist(folds))]
-  } else {
-    cv_pred_mat[order(unlist(folds)), , drop = FALSE]
-  }
+f1m <- function(y,pred){
+  y_products <- unlist(str_split(y," "))
+  pred_products <- unlist(str_split(pred, " "))
+  
+  tp <- sum(pred_products %in% y_products)
+  fp <- sum(!pred_products %in% y_products)
+  fn <- sum(!y_products %in% pred_products)
+  
+  precision <- tp/(tp+fp)
+  recall <- tp/(tp+fn)
+  
+  score <- ifelse(precision+recall==0,0,2*precision*recall / (precision+recall))
+  score
 }
 
 # Load Data ---------------------------------------------------------------
@@ -72,7 +69,7 @@ gc()
 # Take subset of Data ----------------------------------------------------
 test_users <- unique(ord[eval_set=="test", user_id])
 train_users <- unique(ord[eval_set=="train", user_id]) #& !user_id %in% reorder_users
-n_users <- 30000
+n_users <- 15000
 all_train_users <- train_users[1:n_users]
 
 all_users <- c(all_train_users, test_users)
@@ -352,7 +349,7 @@ params <- list(
 # Get the folds ---------------------------------
 
 # 131,209 users in total
-users_per_fold <- 10000
+users_per_fold <- 5000
 n_fold <- 3
 
 # create the folds
@@ -389,9 +386,9 @@ for (i in 1:length(folds)) {
   
   xval <- data.matrix(cv_val[,-c("user_id", "product_id", "order_id", "reordered"), with=FALSE])
   yval <- cv_val[,reordered]
-  dval <- lgb.Dataset(xval,label=yval)
+  dval <- lgb.Dataset(xval,label=yval, free_raw_data = FALSE)
   
-  valids <- list(train = dtrain, valid=dval, free_raw_data = FALSE)  
+  valids <- list(train = dtrain, valid=dval)  
   
   train_users <- cv_train[,user_id]
   
@@ -465,6 +462,30 @@ for (i in 1:length(folds)) {
   rm(dtrain, dval, bst, cv_train, cv_val)
   gc()
 }
+
+submission1 <- train[(oof_pred>0.2)*1==1,.(ypred = paste(product_id, collapse = " ")), order_id]
+submission2 <- train[reordered==1,.(y = paste(product_id, collapse = " ")), order_id]
+
+missing1 <- data.table(
+  order_id = unique(train$order_id[!train$order_id %in% submission1$order_id]),
+  ypred = "None"
+)
+missing2 <- data.table(
+  order_id = unique(train$order_id[!train$order_id %in% submission2$order_id]),
+  y = "None"
+)
+
+submission1 <- rbindlist(list(submission1, missing1))
+submission2 <- rbindlist(list(submission2, missing2))
+
+submission <- merge(submission1, submission2, by="order_id")
+
+f1score<-submission[,.(f1score = f1m(y,ypred)), order_id][,.(f1score=mean(f1score))]
+## i was here 
+
+
+
+
 
 th <- train[,.(
   user_id=user_id,
