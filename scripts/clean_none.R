@@ -59,7 +59,7 @@ f1q <- function(y,pred,addnone){
   score
 }
 
-f1e <- function(y, probs,k) {
+f1e <- function(probs,k) {
   s <- length(probs)
   gt <- do.call("CJ",rep(list(c(0,1)),s))
   
@@ -76,10 +76,10 @@ f1e <- function(y, probs,k) {
 }
 
 
-dofit <- function(y,probs){
+dofit <- function(probs){
   res <- data.table(k=integer(),none=integer(), f1=double())
   for (i in 0:length(y)) {
-    res <- rbindlist(list(res,f1e(y,probs,i)))
+    res <- rbindlist(list(res,f1e(probs,i)))
   }
   res[f1==max(f1)]
 }
@@ -413,9 +413,9 @@ for (i in 1:n_fold) {
 
 # Do the CV ------------------------------------
 threshold <- 0.20
-n_rounds <- 200
+n_rounds <- 400
 
-calc_f1_rounds <- seq(100,200,10)
+calc_f1_rounds <- seq(160,400,20)
 bst_rnds <- diff(c(0,calc_f1_rounds, n_rounds))
 bst_rnds <- bst_rnds[!bst_rnds==0]
 
@@ -467,21 +467,6 @@ best_iter <- sum(bst_rnds[1:(which.max(as.matrix(results$m))+1)])
 
 n_rounds <- best_iter
 
-
-# Fit the User Product Model to all training data & predict test ---------------------------------
-xtrain <- as.matrix(train[,-c("user_id", "product_id", "order_id", "reordered"),with=FALSE])
-ytrain <- train$reordered
-dtrain <- lgb.Dataset(xtrain,label=ytrain)
-
-valids <- list(train = dtrain)
-
-model <- lgb.train(data = dtrain, params = params, nrounds = n_rounds, valids=valids)
-
-xtest <- as.matrix(test[,-c("user_id","order_id", "product_id"),with=FALSE])
-test$pred <- predict(model, xtest)
-
-best_iter <- 130
-
 # Get oof predictions for best round ----------------------------------------
 train$oof_pred <- NA
 for (i in 1:length(folds)) {
@@ -518,7 +503,7 @@ f1score
 
 # adjust thresholds
 train<-train[order(user_id, -oof_pred)]
-train[n_products_in_order<=10, c("k","none","f1") := dofit(reordered,oof_pred), order_id]
+train[n_products_in_order<=10, c("k","none","f1") := dofit(oof_pred), order_id]
 train[!is.na(k),':=' (pred_reordered = c(rep(1,mean(k)),rep(0,mean(n_products_in_order)-mean(k)))),order_id]
 
 addnones <- train[k>0 & none==1,unique(order_id)]
@@ -547,180 +532,9 @@ f1score
 
 
 
-th <- train[,.(
-  user_id=user_id,
-  order_id = order_id, 
-  y=reordered, 
-  pred=oof_pred)][,':=' (
-    pred_basket = sum(pred),
-    round_basket = round(sum(pred)),
-    y_basket = sum(y)), order_id][
-      order(user_id,-pred)]
 
-f1_score <- th[,.(f1score = f1(y,(pred>0.2)*1)), user_id][,.(f1_mean=mean(f1score))]
-f1_score
-
-
-
-
-# th[,':=' (r_basket = round(pred_basket))]
-# thresh[,':=' (thresh = 0.2161+basket*0.003159)]
-# t2 <- merge(th,thresh, by.x="r_basket", by.y="basket")
-# f1_score <- t2[,.(f1score = f1(y,(pred>thresh)*1)), user_id][,.(f1_mean=mean(f1score))]
-# f1_score
-# 
-# threshs <- seq(0.15,0.35, 0.01)
-# baskets <- seq(0,max(th$r_basket))
-# f1_table <- matrix(NA,length(threshs), length(baskets))
-# for (i in 1:length(threshs)) {
-#   for (j in 1:length(baskets)) {
-#     f1_table[i,j] <- th[r_basket==baskets[j],.(f1score = f1(y,(pred>threshs[i])*1)), user_id][,.(f1_mean=mean(f1score))]$f1_mean
-#   }
-# }
-# 
-# baskets <- data.table(baskets,th=threshs[unlist(apply(f1_table, 2, FUN = function(x) ifelse(!all(is.na(x)), which.max(x),4)))])
-# t2 <- merge(th,baskets, by.x="pred_basket", by.y="baskets",all.x=TRUE)
-# t2[is.na(th), th:=0.19]
-# f1_score <- t2[,.(f1score = f1(y,(pred>th)*1)), user_id][,.(f1_mean=mean(f1score))]
-# f1_score
-
-
-### try to predict best threshold per order
-# find best threshold
-
-maxsize <- th[,.N, user_id][,max(N)]
-mat <- matrix(0,maxsize, maxsize)
-for (i in 1:dim(mat)[2]){
-  mat[(1:i),i]<-1
-}
-
-# predictions are ordered descending, take the top k products
-order_ids <- unique(th$order_id)
-baskets <- unique(th$round_basket)
-best_th <- vector(length=length(baskets))
-for (j in 1:length(baskets)) {
-  cat(j, 'of', length(baskets),'basket',baskets[j], ' ')
-  tmp <- th[round_basket==baskets[j]]
-  user_ids <- unique(tmp$user_id)
-  threshs <- vector(length=length(user_ids))
-  for (i in 1:length(user_ids)) {
-    tmpp <- tmp[user_id == user_ids[i]]
-    l <- nrow(tmpp)
-    f1s <- vector(length = l)
-    for (k in 1:nrow(tmpp)){
-      f1s[k] <- f1(tmpp$y, mat[1:l,k])
-    }
-  threshs[i] <- tmpp[,pred[which.max(f1s)]]
-  }
-  best_th[j] <- mean(threshs)
-}
-
-# # predictions are ordered descending, take the top k products
-# user_ids <- unique(th$user_id)
-# order_ids <- unique(th$order_id)
-# baskets <- unique(th$round_basket)
-# best_th <- vector(length=length(user_ids))
-# for (j in 1:length(baskets)) {
-#   tmp <- th[user_id==user_ids[j]]
-#   l <- dim(tmp)[1]
-#   f1s <- vector(length = l)
-#   for (i in 1:dim(tmp)[1]){
-#     f1s[i] <- f1(tmp$y, mat[1:l,i])
-#   }
-#   best_th[j] <- tmp[,pred[which.max(f1s)]]
-# }
-
-dt <- data.table(baskets,best_th)
-th <- merge(th, dt, by.x="round_basket", by.y="baskets")
-f1_score <- th[,.(f1score = f1(y,(pred>=best_th)*1)), user_id][,.(f1_mean=mean(f1score))]
-f1_score
-
-thresh_train <- data.table(user_id = user_ids, best_th = best_th)
-th <- merge(th, thresh_train)
-f1_score <- train_th[,.(f1score = f1(y,(pred>=best_th)*1)), user_id][,.(f1_mean=mean(f1score))]
-f1_score
-
-# Build Model to estimate threshold -----------------------------------
-
-train_th <- th[,.(
-  user_id=mean(user_id), 
-  n_pp = .N, sd_pred=mean(sd(pred)), 
-  m_pred = mean(pred), 
-  max_pred=max(pred), 
-  min_pred=min(pred), 
-  y = mean(best_th), 
-  pred_basket=mean(pred_basket),
-  pnone = prod(1-pred)), order_id]
-
-xtrain <- as.matrix(train_th[,-c("user_id", "order_id","y"), with=FALSE])
-ytrain <- train_th$y
-
-dtrain <- lgb.Dataset(xtrain, label=ytrain)
-
-# Setting params for fitting
-params_th <- list(
-  objective           = "regression",
-  num_leaves          = 4,
-  learning_rate       = 0.03
-)
-
-valids <- list(train = dtrain)
-
-folds[[1]] <- 1:10000
-folds[[2]] <- 10001:20000
-folds[[3]] <- 20001:30000
-model_th <- lgb.cv(data = dtrain, params = params_th, nrounds = 670, folds=folds)
-
-# get oof predictions for threshold model --------------
-train_th$oof_pred <- NA
-for (i in 1:length(folds)) {
-  cat('\n\nTraining on fold', i,'...\n')
-  cv_train <- train_th[-folds[[i]],]
-  cv_val <- train_th[folds[[i]],]
-  
-  xtrain <- as.matrix(cv_train[,-c("user_id", "order_id", "y") ,with=FALSE])
-  ytrain <- cv_train$y
-  dtrain <- lgb.Dataset(xtrain,label=ytrain)
-  
-  xval <- data.matrix(cv_val[,-c("user_id", "order_id", "y"), with=FALSE])
-  yval <- cv_val$y
-  dval <- lgb.Dataset(xval,label=yval)
-  
-  bst <- lgb.train(params_th,dtrain,670,verbose=0) # first boosting iteration
-  
-  pred<-predict(bst,xval)
-  train_th$oof_pred[folds[[i]]] <- pred
-  
-  rm(dtrain, dval, bst, cv_train, cv_val)
-  gc()
-}
-
-rmse<-sqrt(mean((train_th$y-train_th$oof_pred)^2))
-rmse
-train_th %>% ggplot(aes(oof_pred,y))+geom_point()+geom_smooth(method="lm")
-
-plot(unlist(model_th$record_evals$valid$l2$eval))
-best_iter <- which.min(unlist(model_th$record_evals$valid$l2$eval))
-
-th_model <- lgb.train(data=dtrain, params=params_th, nround=best_iter, valids=valids)
-
-importance <- lgb.importance(th_model)
-ggplot(importance,aes(y=Gain,x=reorder(Feature,Gain)))+geom_bar(stat="identity")+coord_flip()+theme(axis.text.y = element_text(hjust = 0))
-
-th_test <- test[,.(user_id=user_id,order_id = order_id, pred=pred)][,':=' (pred_basket = sum(pred)), order_id][order(user_id,-pred)]
-th_test<-th_test[,.(user_id=mean(user_id), n_pp = .N, sd_pred=mean(sd(pred)), pred_basket=mean(pred_basket)), order_id]
-
-xtest <- as.matrix(th_test[,-c("user_id", "order_id"), with=FALSE])
-dtest <- lgb.Dataset(xtrain)
-pred_th <- predict(th_model, xtest)
-
-th_test <- data.table(th_test[,.(user_id=user_id)], pred_th)
-
-
-
-
-
-# Fit the Model to all training data -------------------------------------
+# Threshold ---------------------------------------------------------------
+# Fit the User Product Model to all training data & predict test ---------------------------------
 xtrain <- as.matrix(train[,-c("user_id", "product_id", "order_id", "reordered"),with=FALSE])
 ytrain <- train$reordered
 dtrain <- lgb.Dataset(xtrain,label=ytrain)
@@ -729,101 +543,29 @@ valids <- list(train = dtrain)
 
 model <- lgb.train(data = dtrain, params = params, nrounds = n_rounds, valids=valids)
 
-importance <- lgb.importance(model)
-#xgb.ggplot.importance(importance)+theme(axis.text.y = element_text(hjust = 0))
-ggplot(importance,aes(y=Gain,x=reorder(Feature,Gain)))+geom_bar(stat="identity")+coord_flip()+theme(axis.text.y = element_text(hjust = 0))
-ggplot(importance,aes(y=Gain,x=reorder(Feature,Feature)))+geom_bar(stat="identity")+coord_flip()+theme(axis.text.y = element_text(hjust = 0))
-
-# Look at out of fold predictions ---------------------------------------------------------------
-setkey(train, user_id)
-
-train <- merge(train,train_info, all.x=TRUE)
-
-train$pred <- predict(model,xtrain)
-train <- train[order(user_id,-pred)]
-train[,':=' (top = 1:.N), user_id]
-train[,':=' (pred_basket = sum(pred)), user_id]
-
-
-ttmp <- train[,.(sp=mean(pred_basket),sr=mean(sum_reordered)),user_id]
-ggplot(ttmp,aes(sp,sr))+geom_point()+geom_abline(slope=1)
-cor(ttmp$sp,ttmp$sr)
-
-# choose a threshold -----------------------------------------------------------
-
-train[, ':=' (pred=ifelse(top<=user_order_products_2*user_reorder_rate_2,1,0))]
-train[, ':=' (pred=ifelse(prediction>0.18,1,0))] # fixed threshold
-train[, ':=' (pred=ifelse(top<=sum_reordered,1,0))]
-
-summary(glm(reordered ~ prediction, data=train))
-tmp <- train %>% group_by(user_id) %>% summarise(f1=f1(reordered, pred), sum_predicted=sum(pred)) %>% left_join(train_info)
-tmp <- tmp %>% mutate(diff_basket_size = sum_reordered-sum_predicted)
-#ggplot(tmp,aes(x=sum_predicted,y=f1))+geom_point()+geom_smooth()
-#ggplot(tmp,aes(x=sum_reordered/sum_products,y=f1))+geom_point()+geom_smooth()
-
-tmp %>% ungroup() %>% summarize(meanf1 = mean(f1)) %>% .[[1]]
-
-
-cv_val$prediction <- predict(model, dval)
-
-# Threshold ---------------------------------------------------------------
-cv_val <- cv_val[order(user_id,-prediction)]
-cv_val[,':=' (top = 1:.N), user_id]
-
-ttmp <- cv_val[,.(sp=sum(prediction),sr=sum(reordered)),user_id]
-ggplot(ttmp,aes(sp,sr))+geom_point()+geom_abline(slope=1)+geom_smooth(method="lm")
-cor(ttmp$sp,ttmp$sr)
-
-
-
-summary(glm(reordered ~ prediction, data=val))
-tmp <- val %>% group_by(user_id) %>% summarise(f1=f1(reordered, pred), sum_predicted=sum(pred), avg_size=mean(user_average_basket)) %>% left_join(train_info)
-tmp <- tmp %>% mutate(diff_basket_size = sum_reordered-sum_predicted)
-#ggplot(tmp,aes(x=sum_predicted,y=f1))+geom_point()+geom_smooth()
-#ggplot(tmp,aes(x=sum_reordered/sum_products,y=f1))+geom_point()+geom_smooth()
-
-tmp %>% ungroup() %>% summarize(meanf1 = mean(f1)) %>% .[[1]]
-
-rm(importance)
-gc()
-
-
-# Apply model to test data ------------------------------------------------
 xtest <- as.matrix(test[,-c("user_id","order_id", "product_id"),with=FALSE])
 test$pred <- predict(model, xtest)
-
-
-# Threshold ---------------------------------------------------------------
 test <- test[order(user_id,-pred)]
-test[,':=' (top = 1:.N), user_id]
-test[,':=' (pred_basket = sum(pred)), user_id]
 
-test[pred_basket>30,':=' (adapted_basket = pred_basket+5)]
-test[pred_basket<=30,':=' (adapted_basket = pred_basket)]
-test[, ':=' (reordered=ifelse(top<=adapted_basket,1,0))]
-#test[, ':=' (reordered=ifelse(top<=user_average_basket*user_reorder_ratio,1,0))]
-#close_orders <- test %>% group_by(order_id) %>% summarize(m=mean(reordered),mx=max(reordered),s=sum(reordered>threshold)) %>% filter(between(m,0.9*threshold,1.1*threshold) & s <= 5 & mx <= 0.35) %>% select(order_id) %>% .[[1]]
+# do fixed thresholding first
+test[, ':=' (pred_reordered = (pred>0.20)*1)][,n_products_in_order := .N, order_id]
 
-test[,reordered:=(pred>=pred_th)*1]
+# adjust thresholds
+test[n_products_in_order<=10, c("k","none","f1") := dofit(pred), order_id]
+test[!is.na(k),':=' (pred_reordered = c(rep(1,mean(k)),rep(0,mean(n_products_in_order)-mean(k)))),order_id]
 
-# all reorderes to 1 -----------------------------------------------------
-#test[user_id %in% reorder_users, ':=' (reordered=1)]
+addnones <- test[k>0 & none==1,unique(order_id)]
 
-submission <- test[reordered==1,.(products = paste(product_id, collapse = " ")), order_id]
+submission1 <- test[pred_reordered==1,.(ypred = paste(product_id, collapse = " ")), order_id]
 
-
-
-missing <- data.table(
-  order_id = unique(test$order_id[!test$order_id %in% submission$order_id]),
-  products = "None"
+missing1 <- data.table(
+  order_id = unique(test$order_id[!test$order_id %in% submission1$order_id]),
+  ypred = "None"
 )
 
-submission <- rbindlist(list(submission, missing))
-
-# add none to close orders
-tmpp <- test[order(-pred),.SD,order_id][,omp := 1-pred][,p_none := prod(omp), order_id]
-none_orders <- tmpp[pred_basket < 1]$order_id
-submission[(order_id %in% none_orders) & (products != "None"), products:=str_c(products,"None", sep=" ")]
+submission <- rbindlist(list(submission1, missing1))
+# add nones
+submission[order_id %in% addnones & ypred != "None", ypred:=paste(ypred, "None"), order_id] 
 
 fwrite(submission[order(order_id)], file = "submit.csv")
 
