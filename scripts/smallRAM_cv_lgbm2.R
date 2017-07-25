@@ -37,6 +37,53 @@ f1m <- function(y,pred){
   score
 }
 
+
+
+f1q <- function(y,pred,addnone){
+  if(addnone){
+    pred <- c(pred,1)
+    if (all(y==0)) {
+      y <- c(y,1)
+    } else {
+      y <- c(y,0)
+    }
+  }
+  tp <- sum(pred==1 & y == 1)
+  fp <- sum(pred==1 & y == 0)
+  fn <- sum(pred==0 & y == 1)
+  
+  precision <- ifelse ((tp==0 & fp==0), 0, tp/(tp+fp)) # no reorders predicted
+  recall <- ifelse ((tp==0 & fn==0), 0, tp/(tp+fn)) # no products reordered
+  
+  score <- ifelse((precision==0 & recall==0),0,2*precision*recall/(precision+recall))
+  score
+}
+
+f1e <- function(y, probs,k) {
+  s <- length(probs)
+  gt <- do.call("CJ",rep(list(c(0,1)),s))
+  
+  tmp <- gt*2-1
+  tmp <- abs(-sweep(gt,2,probs, FUN="+")+1)
+  
+  ysel <- c(rep(1,k),rep(0,s-k))
+  tmp <- apply(tmp,1,prod)
+  res<-matrix(0,2,2^s)
+  res[1,]<-apply(gt,1,FUN = function(x) f1q(x,ysel,1))
+  res[2,]<-apply(gt,1,FUN = function(x) f1q(x,ysel,0))  
+  res <- res %*% tmp
+  dt <- data.table(k=k,none=which.max(res),f1=res[which.max(res)])
+}
+
+
+dofit <- function(y,probs){
+  res <- data.table(k=integer(),none=integer(), f1=double())
+  for (i in 0:length(y)) {
+    res <- rbindlist(list(res,f1e(y,probs,i)))
+  }
+  res[f1==max(f1)]
+}
+
 # Load Data ---------------------------------------------------------------
 path <- "../input"
 
@@ -464,7 +511,19 @@ for (i in 1:length(folds)) {
   gc()
 }
 
-submission1 <- train[(oof_pred>0.19)*1==1,.(ypred = paste(product_id, collapse = " ")), order_id]
+# do fixed thresholding first
+train[, ':=' (pred_reordered = (oof_pred>0.20)*1)][,n_products_in_order := .N, order_id]
+f1score<-train[,.(f1score = f1(reordered,pred_reordered)), order_id][,.(f1score=mean(f1score))]
+f1score
+
+# adjust thresholds
+train<-train[order(user_id, -oof_pred)]
+train[n_products_in_order<=10, c("k","none","f1") := dofit(reordered,oof_pred), order_id]
+train[!is.na(k),':=' (pred_reordered = c(rep(1,mean(k)),rep(0,mean(n_products_in_order)-mean(k)))),order_id]
+
+addnones <- train[k>0 & none==1,unique(order_id)]
+
+submission1 <- train[pred_reordered==1,.(ypred = paste(product_id, collapse = " ")), order_id]
 submission2 <- train[reordered==1,.(y = paste(product_id, collapse = " ")), order_id]
 
 missing1 <- data.table(
@@ -477,57 +536,15 @@ missing2 <- data.table(
 )
 
 submission1 <- rbindlist(list(submission1, missing1))
+# add nones
+submission1[order_id %in% addnones & ypred != "None", ypred:=paste(ypred, "None"), order_id] 
 submission2 <- rbindlist(list(submission2, missing2))
 
 submission <- merge(submission1, submission2, by="order_id")
 
 f1score<-submission[,.(f1score = f1m(y,ypred)), order_id][,.(f1score=mean(f1score))]
 f1score
-## i was here 
 
-f1q <- function(y,pred,addnone){
-  if(addnone){
-    pred <- c(pred,1)
-    if (all(y==0)) {
-      y <- c(y,1)
-    } else {
-      y <- c(y,0)
-    }
-  }
-  tp <- sum(pred==1 & y == 1)
-  fp <- sum(pred==1 & y == 0)
-  fn <- sum(pred==0 & y == 1)
-  
-  precision <- ifelse ((tp==0 & fp==0), 0, tp/(tp+fp)) # no reorders predicted
-  recall <- ifelse ((tp==0 & fn==0), 0, tp/(tp+fn)) # no products reordered
-  
-  score <- ifelse((precision==0 & recall==0),0,2*precision*recall/(precision+recall))
-  score
-}
-
-f1e <- function(y, probs,k) {
-  gt <- do.call("CJ",rep(list(c(0,1)),k))
-  p <- probs[1:k]
-  
-  tmp <- gt*2-1
-  tmp <- abs(-sweep(gt,2,p, FUN="+")+1)
-  
-  ysel <- rep(1,k)
-  tmp <- apply(tmp,1,prod)
-  res<-matrix(0,2,2^k)
-  res[1,]<-apply(gt,1,FUN = function(x) f1q(x,ysel,1))
-  res[2,]<-apply(gt,1,FUN = function(x) f1q(x,ysel,0))  
-  res <- res %*% tmp
-  dt <- data.table(k=k,none=which.max(res),f1=res[which.max(res)])
-}
-
-train<-train[order(user_id, -oof_pred)]
-tmp <- train[user_id==712, .(y=reordered,probs=oof_pred)]
-
-res <- data.table(k=integer(),none=integer(), f1=double())
-for (i in 1:nrow(tmp)) {
-  res <- rbindlist(list(res,f1e(tmp$y,tmp$probs,i)))
-}
 
 
 th <- train[,.(
@@ -542,6 +559,9 @@ th <- train[,.(
 
 f1_score <- th[,.(f1score = f1(y,(pred>0.2)*1)), user_id][,.(f1_mean=mean(f1score))]
 f1_score
+
+
+
 
 # th[,':=' (r_basket = round(pred_basket))]
 # thresh[,':=' (thresh = 0.2161+basket*0.003159)]
