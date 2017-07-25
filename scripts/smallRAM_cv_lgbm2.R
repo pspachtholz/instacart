@@ -416,7 +416,7 @@ for (i in 1:length(folds)) {
 }
 results <- data.frame(m=rowMeans(res$f1),sd=apply(res$f1,1,sd),res$f1, res$mean_reordered)
 results
-best_iter <- 150#sum(bst_rnds[1:which.max(as.matrix(results$m))])
+best_iter <- sum(bst_rnds[1:(which.max(as.matrix(results$m))+1)])
 
 n_rounds <- best_iter
 
@@ -463,7 +463,7 @@ for (i in 1:length(folds)) {
   gc()
 }
 
-submission1 <- train[(oof_pred>0.2)*1==1,.(ypred = paste(product_id, collapse = " ")), order_id]
+submission1 <- train[(oof_pred>0.19)*1==1,.(ypred = paste(product_id, collapse = " ")), order_id]
 submission2 <- train[reordered==1,.(y = paste(product_id, collapse = " ")), order_id]
 
 missing1 <- data.table(
@@ -481,10 +481,29 @@ submission2 <- rbindlist(list(submission2, missing2))
 submission <- merge(submission1, submission2, by="order_id")
 
 f1score<-submission[,.(f1score = f1m(y,ypred)), order_id][,.(f1score=mean(f1score))]
+f1score
 ## i was here 
 
+train<-train[order(user_id, -oof_pred)]
+tmp <- train[user_id==30, .(y=reordered,probs=oof_pred)]
+y<-tmp$y
+probs <- tmp$probs
+f1e(tmp$y, tmp$probs)
 
-
+f1q <- function(y,pred){
+  
+}
+f1e <- function(y, probs) {
+  gt <- expand.grid(c(0,1),c(0,1))
+  gt[,3] <- (rowSums(gt)==0)*1 # none
+  p <- probs[c(1,2,7)]
+  
+  ysel <- c(1,1,1)
+  tt <- as.matrix(tt)
+  tmp <- as.matrix(tt) %*% p
+  res<-apply(tt,1,FUN = function(x) f1(x,ysel))
+  t(tmp) %*% res
+}
 
 
 th <- train[,.(
