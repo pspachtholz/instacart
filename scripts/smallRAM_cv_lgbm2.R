@@ -494,14 +494,14 @@ f1q <- function(y,pred){
   
 }
 f1e <- function(y, probs) {
+  probs=c(probs,prod(1-probs))
   gt <- expand.grid(c(0,1),c(0,1))
   gt[,3] <- (rowSums(gt)==0)*1 # none
-  p <- probs[c(1,2,7)]
+  p <- probs[c(1:2,length(probs))]
   
-  ysel <- c(1,1,1)
-  tt <- as.matrix(tt)
-  tmp <- as.matrix(tt) %*% p
-  res<-apply(tt,1,FUN = function(x) f1(x,ysel))
+  ysel <- rep(1,3)
+  tmp <- apply(as.matrix(gt) * p,2,prod)
+  res<-apply(gt,1,FUN = function(x) f1(x,ysel))
   t(tmp) %*% res
 }
 
