@@ -75,13 +75,70 @@ f1e <- function(probs,k) {
   dt <- data.table(k=k,none=which.max(res),f1=res[which.max(res)])
 }
 
+f1e2 <- function(probs,k) {
+  s <- length(probs)
+  gt <- do.call("CJ",rep(list(c(0,1)),s))
+  
+  tmp <- gt*2-1
+  tmp <- abs(-sweep(gt,2,probs, FUN="+")+1)
+  
+  ysel <- c(rep(1,k),rep(0,s-k))
+  tmp <- apply(tmp,1,prod)
+  res<-matrix(0,2,2^s)
+  res<-apply(gt,1,FUN = function(x) f1(x,ysel))
+  res <- res %*% tmp
+  dt <- data.table(k=k,none=which.max(res),f1=res[which.max(res)])
+}
+
+
 
 dofit <- function(probs){
   res <- data.table(k=integer(),none=integer(), f1=double())
-  for (i in 0:length(y)) {
-    res <- rbindlist(list(res,f1e(probs,i)))
+  for (i in 0:length(probs)) {
+    res <- rbindlist(list(res,f1e2(probs,i)))
   }
   res[f1==max(f1)]
+}
+
+ef1 <- function(probs){
+  m <- length(probs)
+  
+  gt <- do.call("CJ",rep(list(c(0,1)),m))
+  gt <- gt[2:nrow(gt)]
+  gt <- data.table(gt, s=rowSums(gt))
+  
+  tmp <- gt[,1:m]*2-1
+  tmp <- abs(-sweep(gt[,1:m],2,probs, FUN="+")+1)
+  
+  tmp <- data.table(tmp, p = apply(tmp,1,prod))
+  
+  gt <- data.table(gt, p = tmp[,p])
+  
+  p_is = matrix(NA, m,m)
+  for (i in 1:m) {
+    for (j in 1:m) {
+      p_is[i,j] = sum(gt[gt[[j]]==1 & gt[,s]==i,p])
+    }
+  }
+  w_sk = matrix(NA, m,m)
+  for (s in 1:m) {
+    for (k in 1:m) {
+      w_sk[s,k]<-2/(s+k)
+    }
+  }
+  p0 <- prod(1-probs)
+  
+  delta <- p_is %*% w_sk
+  
+  h <- vector(length=m)
+  for (k in 1:m) {
+    hi = c(rep(1,k),rep(0,m-k))
+    h[k] = delta[,k] %*% hi
+  }
+  
+  h <- c(p0,h)
+  
+  k <- which.max(h)-1
 }
 
 # Load Data ---------------------------------------------------------------
@@ -116,10 +173,13 @@ gc()
 # Take subset of Data ----------------------------------------------------
 test_users <- unique(ord[eval_set=="test", user_id])
 train_users <- unique(ord[eval_set=="train", user_id]) #& !user_id %in% reorder_users
-n_users <- 15000
+n_users <- 30000
 all_train_users <- train_users[1:n_users]
 
 all_users <- c(all_train_users, test_users)
+
+rm(train_users, test_users)
+gc()
 
 
 
@@ -396,7 +456,7 @@ params <- list(
 # Get the folds ---------------------------------
 
 # 131,209 users in total
-users_per_fold <- 5000
+users_per_fold <- 10000
 n_fold <- 3
 
 # create the folds
@@ -413,9 +473,9 @@ for (i in 1:n_fold) {
 
 # Do the CV ------------------------------------
 threshold <- 0.20
-n_rounds <- 400
+n_rounds <- 200
 
-calc_f1_rounds <- seq(160,400,20)
+calc_f1_rounds <- seq(110,200,10)
 bst_rnds <- diff(c(0,calc_f1_rounds, n_rounds))
 bst_rnds <- bst_rnds[!bst_rnds==0]
 
@@ -473,19 +533,19 @@ for (i in 1:length(folds)) {
   cat('\n\nTraining on fold', i,'...\n')
   cv_train <- train[-folds[[i]],]
   cv_val <- train[folds[[i]],]
-  
+
   xtrain <- as.matrix(cv_train[,-c("user_id", "product_id", "order_id", "reordered", "oof_pred"),with=FALSE])
   ytrain <- cv_train$reordered
   dtrain <- lgb.Dataset(xtrain,label=ytrain,free_raw_data = FALSE)
-  
+
   xval <- data.matrix(cv_val[,-c("user_id", "product_id", "order_id", "reordered"), with=FALSE])
   yval <- cv_val$reordered
   dval <- lgb.Dataset(xval,label=yval,free_raw_data = FALSE)
-  
+
   train_users <- cv_train$user_id
   valid_users <- cv_val$user_id
-  valid_orders <- cv_val$order_id  
-  
+  valid_orders <- cv_val$order_id
+
   bst_rnds <- best_iter
   bst <- lgb.train(params,dtrain,bst_rnds,verbose=0) # first boosting iteration
 
@@ -503,8 +563,19 @@ f1score
 
 # adjust thresholds
 train<-train[order(user_id, -oof_pred)]
-train[n_products_in_order<=10, c("k","none","f1") := dofit(oof_pred), order_id]
+train[n_products_in_order<=2, c("k","none","f1") := dofit(oof_pred), order_id]
+train[n_products_in_order<=2, k2 := ef1(oof_pred), order_id]
+
 train[!is.na(k),':=' (pred_reordered = c(rep(1,mean(k)),rep(0,mean(n_products_in_order)-mean(k)))),order_id]
+
+# train[n_products_in_order<=2,':=' (pred_reordered_old = c(rep(1,mean(k)),rep(0,mean(n_products_in_order)-mean(k)))),order_id]
+# train[n_products_in_order<=2,':=' (pred_reordered_new = c(rep(1,mean(k2)),rep(0,mean(n_products_in_order)-mean(k2)))),order_id]
+# 
+# f1score<-train[n_products_in_order<=2,.(f1score = f1(reordered,pred_reordered_old)), order_id][,.(f1score=mean(f1score))]
+# f1score
+# 
+# f1score<-train[n_products_in_order<=2,.(f1score = f1(reordered,pred_reordered_new)), order_id][,.(f1score=mean(f1score))]
+# f1score
 
 addnones <- train[k>0 & none==1,unique(order_id)]
 
@@ -522,7 +593,7 @@ missing2 <- data.table(
 
 submission1 <- rbindlist(list(submission1, missing1))
 # add nones
-submission1[order_id %in% addnones & ypred != "None", ypred:=paste(ypred, "None"), order_id] 
+submission1[order_id %in% addnones & ypred != "None", ypred:=paste(ypred, "None"), order_id]
 submission2 <- rbindlist(list(submission2, missing2))
 
 submission <- merge(submission1, submission2, by="order_id")
@@ -531,9 +602,6 @@ f1score<-submission[,.(f1score = f1m(y,ypred)), order_id][,.(f1score=mean(f1scor
 f1score
 
 
-
-
-# Threshold ---------------------------------------------------------------
 # Fit the User Product Model to all training data & predict test ---------------------------------
 xtrain <- as.matrix(train[,-c("user_id", "product_id", "order_id", "reordered"),with=FALSE])
 ytrain <- train$reordered
@@ -541,10 +609,20 @@ dtrain <- lgb.Dataset(xtrain,label=ytrain)
 
 valids <- list(train = dtrain)
 
-model <- lgb.train(data = dtrain, params = params, nrounds = n_rounds, valids=valids)
+model <- lgb.train(data = dtrain, params = params, nrounds = best_iter, valids=valids)
 
+rm(res, od, train, train_info, xtrain,ytrain,dtrain,valids, valid_orders, valid_users, y, pred, val_user_groups, val_users_random, all_users, all_train_users)
+gc()
+
+pred <- vector(length=nrow(test))
 xtest <- as.matrix(test[,-c("user_id","order_id", "product_id"),with=FALSE])
-test$pred <- predict(model, xtest)
+pred <- predict(model, xtest)
+rm(xtest)
+gc()
+test$pred <- pred
+rm(pred)
+
+
 test <- test[order(user_id,-pred)]
 
 # do fixed thresholding first
@@ -556,7 +634,7 @@ test[!is.na(k),':=' (pred_reordered = c(rep(1,mean(k)),rep(0,mean(n_products_in_
 
 addnones <- test[k>0 & none==1,unique(order_id)]
 
-submission1 <- test[pred_reordered==1,.(ypred = paste(product_id, collapse = " ")), order_id]
+submission1 <- test[pred_reordered==1,.(products = paste(product_id, collapse = " ")), order_id]
 
 missing1 <- data.table(
   order_id = unique(test$order_id[!test$order_id %in% submission1$order_id]),
@@ -565,7 +643,7 @@ missing1 <- data.table(
 
 submission <- rbindlist(list(submission1, missing1))
 # add nones
-submission[order_id %in% addnones & ypred != "None", ypred:=paste(ypred, "None"), order_id] 
+submission[order_id %in% addnones & products != "None", products:=paste(products, "None"), order_id] 
 
 fwrite(submission[order(order_id)], file = "submit.csv")
 
