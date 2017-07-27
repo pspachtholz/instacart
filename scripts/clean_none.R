@@ -529,16 +529,14 @@ ef1 <- function(probs){
   ptm <- proc.time()
   gt <- do.call("CJ",rep(list(c(0,1)),m))
   gt <- gt[2:nrow(gt)]
-  s <- rowSums(gt)
+  es <- rowSums(gt)
 
-  tmp <- colProds(t(gt)*probs + t(gt==0)*(1-probs))
-  
-  tmp <- data.table(tmp, p = apply(tmp,1,prod))
+  ps <- colProds(t(gt)*probs + t(gt==0)*(1-probs))
 
   p_is = matrix(NA, m,m)
   for (i in 1:m) {
     for (s in 1:m) {
-      p_is[i,s] = sum(gt[gt[[i]]==1 & gt[,es]==s,p])
+      p_is[i,s] = sum(ps[gt[[i]]==1 & es==s])
     }
   }
   w_sk = matrix(NA, m,m)
