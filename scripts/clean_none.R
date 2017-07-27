@@ -11,6 +11,7 @@ library(ggplot2)
 
 f1 <- function (y, pred)
 {
+  # zero reordered - zero predicted --> F1 = 1
   tp <- sum(pred==1 & y == 1)
   fp <- sum(pred==1 & y == 0)
   fn <- sum(pred==0 & y == 1)
@@ -76,15 +77,15 @@ f1e <- function(probs,k) {
 }
 
 f1e2 <- function(probs,k) {
-  s <- length(probs)
-  gt <- do.call("CJ",rep(list(c(0,1)),s))
+  m <- length(probs)
+  gt <- do.call("CJ",rep(list(c(0,1)),m))
   
   tmp <- gt*2-1
   tmp <- abs(-sweep(gt,2,probs, FUN="+")+1)
   
-  ysel <- c(rep(1,k),rep(0,s-k))
+  ysel <- c(rep(1,k),rep(0,m-k))
   tmp <- apply(tmp,1,prod)
-  res<-matrix(0,2,2^s)
+  res<-matrix(0,2,2^m)
   res<-apply(gt,1,FUN = function(x) f1(x,ysel))
   res <- res %*% tmp
   dt <- data.table(k=k,none=which.max(res),f1=res[which.max(res)])
@@ -98,47 +99,6 @@ dofit <- function(probs){
     res <- rbindlist(list(res,f1e2(probs,i)))
   }
   res[f1==max(f1)]
-}
-
-ef1 <- function(probs){
-  m <- length(probs)
-  
-  gt <- do.call("CJ",rep(list(c(0,1)),m))
-  gt <- gt[2:nrow(gt)]
-  gt <- data.table(gt, s=rowSums(gt))
-  
-  tmp <- gt[,1:m]*2-1
-  tmp <- abs(-sweep(gt[,1:m],2,probs, FUN="+")+1)
-  
-  tmp <- data.table(tmp, p = apply(tmp,1,prod))
-  
-  gt <- data.table(gt, p = tmp[,p])
-  
-  p_is = matrix(NA, m,m)
-  for (i in 1:m) {
-    for (j in 1:m) {
-      p_is[i,j] = sum(gt[gt[[j]]==1 & gt[,s]==i,p])
-    }
-  }
-  w_sk = matrix(NA, m,m)
-  for (s in 1:m) {
-    for (k in 1:m) {
-      w_sk[s,k]<-2/(s+k)
-    }
-  }
-  p0 <- prod(1-probs)
-  
-  delta <- p_is %*% w_sk
-  
-  h <- vector(length=m)
-  for (k in 1:m) {
-    hi = c(rep(1,k),rep(0,m-k))
-    h[k] = delta[,k] %*% hi
-  }
-  
-  h <- c(p0,h)
-  
-  k <- which.max(h)-1
 }
 
 # Load Data ---------------------------------------------------------------
@@ -561,21 +521,76 @@ train[, ':=' (pred_reordered = (oof_pred>0.20)*1)][,n_products_in_order := .N, o
 f1score<-train[,.(f1score = f1(reordered,pred_reordered)), order_id][,.(f1score=mean(f1score))]
 f1score
 
+
+
+ef1 <- function(probs){
+  m <- length(probs)
+  
+  ptm <- proc.time()
+  gt <- do.call("CJ",rep(list(c(0,1)),m))
+  gt <- gt[2:nrow(gt)]
+  s <- rowSums(gt)
+
+  tmp <- colProds(t(gt)*probs + t(gt==0)*(1-probs))
+  
+  tmp <- data.table(tmp, p = apply(tmp,1,prod))
+
+  p_is = matrix(NA, m,m)
+  for (i in 1:m) {
+    for (s in 1:m) {
+      p_is[i,s] = sum(gt[gt[[i]]==1 & gt[,es]==s,p])
+    }
+  }
+  w_sk = matrix(NA, m,m)
+  for (s in 1:m) {
+    for (k in 1:m) {
+      w_sk[s,k]<-1/(s+k)
+    }
+  }
+  p0 <- prod(1-probs)
+
+  delta <- p_is %*% w_sk
+  
+  h <- vector(length=m)
+  for (k in 1:m) {
+    hi = c(rep(1,k),rep(0,m-k))
+    h[k] = 2* (delta[,k] %*% hi)
+  }
+  
+  h <- c(p0,h)
+  
+  k <- which.max(h)-1
+  proc.time()-ptm  
+}
+
+
+
+trynum <- 8
 # adjust thresholds
 train<-train[order(user_id, -oof_pred)]
-train[n_products_in_order<=2, c("k","none","f1") := dofit(oof_pred), order_id]
-train[n_products_in_order<=2, k2 := ef1(oof_pred), order_id]
+ptm <- proc.time()
+train[n_products_in_order<=trynum, c("k","none","f1") := dofit(oof_pred), order_id]
+proc.time()-ptm
+ptm <- proc.time()
+train[n_products_in_order<=trynum, k2 := ef1(oof_pred), order_id]
+proc.time()-ptm
 
-train[!is.na(k),':=' (pred_reordered = c(rep(1,mean(k)),rep(0,mean(n_products_in_order)-mean(k)))),order_id]
+#train[!is.na(k),':=' (pred_reordered = c(rep(1,mean(k)),rep(0,mean(n_products_in_order)-mean(k)))),order_id]
 
-# train[n_products_in_order<=2,':=' (pred_reordered_old = c(rep(1,mean(k)),rep(0,mean(n_products_in_order)-mean(k)))),order_id]
-# train[n_products_in_order<=2,':=' (pred_reordered_new = c(rep(1,mean(k2)),rep(0,mean(n_products_in_order)-mean(k2)))),order_id]
-# 
-# f1score<-train[n_products_in_order<=2,.(f1score = f1(reordered,pred_reordered_old)), order_id][,.(f1score=mean(f1score))]
-# f1score
-# 
-# f1score<-train[n_products_in_order<=2,.(f1score = f1(reordered,pred_reordered_new)), order_id][,.(f1score=mean(f1score))]
-# f1score
+train[n_products_in_order<=trynum,':=' (pred_reordered_old = c(rep(1,mean(k)),rep(0,mean(n_products_in_order)-mean(k)))),order_id]
+train[n_products_in_order<=trynum,':=' (pred_reordered_new = c(rep(1,mean(k2)),rep(0,mean(n_products_in_order)-mean(k2)))),order_id]
+
+# baseline
+f1score<-train[n_products_in_order<=trynum,.(f1score = f1(reordered,pred_reordered)), order_id][,.(f1score=mean(f1score))]
+f1score
+
+# slow
+f1score<-train[n_products_in_order<=trynum,.(f1score = f1(reordered,pred_reordered_old)), order_id][,.(f1score=mean(f1score))]
+f1score
+
+# faster
+f1score<-train[n_products_in_order<=trynum,.(f1score = f1(reordered,pred_reordered_new)), order_id][,.(f1score=mean(f1score))]
+f1score
 
 addnones <- train[k>0 & none==1,unique(order_id)]
 
